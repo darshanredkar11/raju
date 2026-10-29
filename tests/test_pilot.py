@@ -88,7 +88,11 @@ def test_app_starts_with_google_only_routes_and_protects_api(monkeypatch):
  health=client.get('/health')
  assert health.status_code==200 and health.json()['outbound_email_enabled'] is False
  home=client.get('/')
- assert home.status_code==200 and 'Talk to your sales agent' in home.text and 'Daily progress' in home.text
+ assert home.status_code==200 and 'Continue with Google' in home.text
+ assert 'Talk to your sales agent' not in home.text
+ assert 'data-page="approvals"' not in home.text
+ assert client.get('/manual').status_code==401
+ assert client.get('/health').json()['harvey_runtime_connected'] is False
  assert client.get('/auth/google').status_code==503
  assert client.get('/api/pending').status_code==401
  assert client.get('/auth/password').status_code==404
@@ -248,7 +252,7 @@ def test_chat_can_create_pending_market_proposals(monkeypatch):
  monkeypatch.setenv('SESSION_SECRET','z'*48)
  module=importlib.import_module('sanjay_pilot.app')
  store=FakeCollection()
- store.insert_one({'_id':'doc-1','type':'product_document','name':'Catalogue.pdf','kind':'catalogue','text':'Verified product range and technical uses.','created_at':datetime.now(timezone.utc)})
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'Catalogue.pdf','kind':'catalogue','text':'Verified product range and technical uses.','created_by':'tester@gmail.com','created_at':datetime.now(timezone.utc)})
  module.pilot=SalesPilot(store)
  async def fake_search(query): return [{'title':'Market source','url':'https://source.example/markets','content':'Import evidence'}]
  async def fake_propose(**kwargs): return [{'market':'Germany','rationale':'Potential importer segment backed by source evidence','evidence_url':'https://source.example/markets','confidence':0.72}]
@@ -272,7 +276,7 @@ def test_chat_can_create_email_draft_but_never_send(monkeypatch):
  monkeypatch.setenv('SESSION_SECRET','z'*48)
  module=importlib.import_module('sanjay_pilot.app')
  store=FakeCollection()
- store.insert_one({'_id':'doc-1','type':'product_document','name':'TDS.pdf','kind':'TDS','text':'Verified product specifications from the TDS.','created_at':datetime.now(timezone.utc)})
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'TDS.pdf','kind':'TDS','text':'Verified product specifications from the TDS.','created_by':'tester@gmail.com','created_at':datetime.now(timezone.utc)})
  module.pilot=SalesPilot(store)
  async def fake_draft(**kwargs): return {'subject':'Introduction to Sanjay Chemicals','body':'Could we discuss your sourcing requirements?'}
  monkeypatch.setattr(module,'generate_sales_draft',fake_draft)
@@ -331,4 +335,32 @@ def test_query_indexes_initialize_once(monkeypatch):
  assert len(store.indexes)==4
  assert client.get('/api/pending').status_code==200
  assert len(store.indexes)==4
+ module.app.dependency_overrides.clear()
+
+
+def test_google_users_cannot_read_or_approve_each_others_records(monkeypatch):
+ import importlib
+ from datetime import datetime, timezone
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ now=datetime.now(timezone.utc)
+ store.insert_one({'_id':'doc-a','type':'product_document','name':'A.pdf','kind':'TDS','pages':1,'created_by':'a@gmail.com','created_at':now,'text':'Product A verified facts.'})
+ store.insert_one({'_id':'doc-b','type':'product_document','name':'B.pdf','kind':'TDS','pages':1,'created_by':'b@gmail.com','created_at':now,'text':'Product B verified facts.'})
+ store.insert_one({'_id':'draft-a','type':'email_draft','recipient':'buyer-a@example.com','subject':'A','body':'Hello from A','status':'pending_approval','sent':False,'created_by':'a@gmail.com','created_at':now})
+ store.insert_one({'_id':'draft-b','type':'email_draft','recipient':'buyer-b@example.com','subject':'B','body':'Hello from B','status':'pending_approval','sent':False,'created_by':'b@gmail.com','created_at':now})
+ module.pilot=SalesPilot(store)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'a@gmail.com','name':'A'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ products=client.get('/api/products')
+ pending=client.get('/api/pending')
+ assert [x['name'] for x in products.json()]==['A.pdf']
+ assert [x['_id'] for x in pending.json()]==['draft-a']
+ denied=client.post('/api/drafts/draft-b/approve',json={'recipient':'buyer-b@example.com','subject':'B','body':'Hello from B'})
+ assert denied.status_code==404
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'b@gmail.com','name':'B'}
+ assert [x['name'] for x in client.get('/api/products').json()]==['B.pdf']
+ assert [x['_id'] for x in client.get('/api/pending').json()]==['draft-b']
  module.app.dependency_overrides.clear()
