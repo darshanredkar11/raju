@@ -1,0 +1,15 @@
+# Isolated disposable POC only. The upstream dashboard remains loopback-only.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates     && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/ethanplusai/harvey.git /opt/harvey     && cd /opt/harvey     && pip install --no-cache-dir -r requirements.txt     && playwright install --with-deps chromium     && rm -rf /root/.cache /var/lib/apt/lists/*
+
+WORKDIR /opt/harvey
+COPY poc/harvey-render-poc-start.sh /usr/local/bin/harvey-render-poc-start
+COPY poc/health_server.py /opt/poc/health_server.py
+RUN chmod 755 /usr/local/bin/harvey-render-poc-start
+
+EXPOSE 10000
+CMD ["/usr/local/bin/harvey-render-poc-start"]
