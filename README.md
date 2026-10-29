@@ -35,6 +35,7 @@ The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 ch
 - `GOOGLE_REDIRECT_URI`: `https://YOUR-SERVICE.onrender.com/auth/google/callback`; register this exact URI in Google Cloud Console.
 - `GOOGLE_ALLOWED_DOMAINS`: comma-separated company domain(s), or use `GOOGLE_ALLOWED_EMAILS` for exact accounts. Set at least one; an empty allowlist denies all users.
 - `SESSION_SECRET`: at least 32 random characters. Keep it private.
+- `TAVILY_API_KEY`: enables web search for market research (external search usage is subject to the provider's plan and limits).
 - `LLM_API_KEY`, optionally `LLM_BASE_URL` and `LLM_MODEL`.
 - `COOKIE_SECURE=true` in hosted HTTPS environments.
 
