@@ -3,7 +3,7 @@ import os, secrets, time
 from collections import OrderedDict, deque
 from typing import Annotated
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -91,6 +91,10 @@ document.getElementById('draftForm').onsubmit=async e=>{e.preventDefault();try{c
 async function logout(){try{await api('/auth/logout',{method:'POST',body:'{}'});csrf='';showSignedOut();msg('Signed out')}catch(e){msg(e.message)}}
 (async()=>{try{const q=new URLSearchParams(location.search);if(q.get('signed_in'))history.replaceState({},'', '/');const r=await fetch('/me',{credentials:'same-origin'});if(r.ok){const d=await r.json();csrf=d.csrf_token||''}await boot()}catch(e){showSignedOut()}})();
 </script></body></html>""")
+
+@app.head("/")
+def home_head():
+    return Response(status_code=200)
 
 @app.get("/auth/google")
 async def google_login(request:Request):
