@@ -59,3 +59,20 @@ def test_app_starts_with_google_only_routes_and_protects_api(monkeypatch):
  assert client.get('/').status_code==200
  assert client.get('/api/pending').status_code==401
  assert client.get('/auth/password').status_code==404
+
+
+def test_market_research_discards_hallucinated_evidence_urls(monkeypatch):
+ import asyncio, json
+ from sanjay_pilot import research
+ monkeypatch.setenv('LLM_API_KEY','test-key')
+ class Response:
+  def raise_for_status(self): pass
+  def json(self): return {'choices':[{'message':{'content':json.dumps({'proposals':[{'market':'Germany','rationale':'Evidence supports an importer segment','evidence_url':'https://source.example/report','confidence':0.7},{'market':'France','rationale':'No cited source','evidence_url':'https://invented.example/fake','confidence':0.8}]})}}]}
+ class Client:
+  def __init__(self,*a,**k): pass
+  async def __aenter__(self): return self
+  async def __aexit__(self,*a): pass
+  async def post(self,*a,**k): return Response()
+ monkeypatch.setattr(research.httpx,'AsyncClient',Client)
+ result=asyncio.run(research.propose_markets_with_llm(product_facts='Verified product facts',buyer_segments='importers',target_region='Europe',sources=[{'title':'source','url':'https://source.example/report','content':'Evidence'}]))
+ assert len(result)==1 and result[0]['evidence_url']=='https://source.example/report'
