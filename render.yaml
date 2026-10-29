@@ -15,10 +15,6 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
-      - key: GOOGLE_ALLOWED_DOMAINS
-        sync: false
-      - key: GOOGLE_ALLOWED_EMAILS
-        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: TAVILY_API_KEY
