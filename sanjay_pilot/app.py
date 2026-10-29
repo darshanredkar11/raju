@@ -130,7 +130,7 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
     except Exception as exc: raise HTTPException(422,'PDF could not be parsed') from exc
     extracted=re.sub(r'\\s+',' ',extracted).strip()[:100000]
     if len(extracted)<20: raise HTTPException(422,'No usable text found. Scanned PDFs need OCR before upload.')
-    name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].split('\\\\')[-1])[:160]
+    name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].replace(chr(92),'/').split('/')[-1])[:160]
     checksum=hashlib.sha256(raw).hexdigest()
     file_id=product_bucket.upload_from_stream(name,raw,metadata={'kind':kind,'sha256':checksum,'uploaded_by':user['email']})
     doc={'_id':secrets.token_hex(16),'type':'product_document','name':name,'kind':kind,'checksum':checksum,'gridfs_id':str(file_id),'text':extracted,'pages':len(reader.pages),'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
