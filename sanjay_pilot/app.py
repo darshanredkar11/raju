@@ -26,7 +26,7 @@ app.add_middleware(SessionMiddleware,secret_key=require_session_secret(),same_si
 oauth=OAuth()
 if os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"):
     oauth.register(name="google",client_id=os.environ["GOOGLE_CLIENT_ID"],client_secret=os.environ["GOOGLE_CLIENT_SECRET"],server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",client_kwargs={"scope":"openid email profile"})
-mongo=None; pilot=None; product_bucket=None
+mongo=None; pilot=None; product_bucket=None; _indexes_ready=False
 if os.getenv("MONGODB_URI"):
     mongo=MongoClient(os.environ["MONGODB_URI"],serverSelectionTimeoutMS=5000,connectTimeoutMS=5000,connect=False)
     db=mongo[os.getenv("MONGODB_DATABASE","sanjay_sales")]
@@ -52,7 +52,17 @@ def require_csrf(request:Request,x_csrf_token:Annotated[str|None,Header()]=None)
     if not expected or not x_csrf_token or not secrets.compare_digest(expected,x_csrf_token):raise HTTPException(403,"CSRF validation failed")
 
 def get_pilot():
+    global _indexes_ready
     if pilot is None:raise HTTPException(503,"MongoDB is not configured")
+    if not _indexes_ready and hasattr(pilot.collection,"create_index"):
+        try:
+            pilot.collection.create_index([("type",1),("created_at",-1)],name="type_created_at")
+            pilot.collection.create_index([("type",1),("owner_email",1),("created_at",-1)],name="type_owner_created")
+            pilot.collection.create_index([("status",1),("created_at",-1)],name="status_created")
+            pilot.collection.create_index([("type",1),("checksum",1)],name="type_checksum")
+            _indexes_ready=True
+        except Exception as exc:
+            raise HTTPException(503,"MongoDB is unavailable or required indexes could not be initialized") from exc
     return pilot
 
 def get_product_document(svc, source_id):
