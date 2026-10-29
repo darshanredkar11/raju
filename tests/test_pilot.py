@@ -280,3 +280,17 @@ def test_chat_can_create_email_draft_but_never_send(monkeypatch):
  assert draft['status']=='pending_approval' and draft['sent'] is False
  assert 'Nothing has been sent' in response.json()['reply']
  module.app.dependency_overrides.clear()
+
+
+def test_upload_rejects_non_pdf_payload(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ module.pilot=SalesPilot(FakeCollection())
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/products/upload',data={'kind':'SDS'},files={'file':('notes.txt',b'not a pdf','text/plain')})
+ assert response.status_code==415
+ module.app.dependency_overrides.clear()
