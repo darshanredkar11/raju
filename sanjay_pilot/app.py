@@ -67,9 +67,7 @@ def get_pilot():
 
 def get_product_document(svc, source_id, owner_email):
     # A verified Google identity gets its own isolated workspace by default.
-    doc=svc.collection.find_one({'_id':source_id,'type':'product_document','created_by':owner_email})
-        if doc is not None: svc.cache.set('product:'+source_id,doc)
-    return doc
+    return svc.collection.find_one({'_id':source_id,'type':'product_document','created_by':owner_email})
 
 class MarketInput(BaseModel):
     model_config=ConfigDict(extra="forbid")
