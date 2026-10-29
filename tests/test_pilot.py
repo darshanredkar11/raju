@@ -85,8 +85,11 @@ def test_app_starts_with_google_only_routes_and_protects_api(monkeypatch):
  monkeypatch.delenv('GOOGLE_CLIENT_SECRET',raising=False)
  app_module=importlib.import_module('sanjay_pilot.app')
  client=TestClient(app_module.app)
- assert client.get('/health').status_code==200
- assert client.get('/').status_code==200
+ health=client.get('/health')
+ assert health.status_code==200 and health.json()['outbound_email_enabled'] is False
+ home=client.get('/')
+ assert home.status_code==200 and 'Talk to your sales agent' in home.text and 'Daily progress' in home.text
+ assert client.get('/auth/google').status_code==503
  assert client.get('/api/pending').status_code==401
  assert client.get('/auth/password').status_code==404
 
@@ -297,3 +300,14 @@ def test_upload_rejects_non_pdf_payload(monkeypatch):
  response=client.post('/api/products/upload',data={'kind':'SDS'},files={'file':('notes.txt',b'not a pdf','text/plain')})
  assert response.status_code==415
  module.app.dependency_overrides.clear()
+
+
+def test_market_approval_is_single_use_and_audited():
+ c=FakeCollection()
+ s=SalesPilot(c)
+ p=s.propose_market('Germany','Evidence-backed importer opportunity','https://example.com/report',0.7,created_by='maker@gmail.com')
+ assert p['created_by']=='maker@gmail.com'
+ result=s.approve_market(p['_id'],approved_by='reviewer@gmail.com')
+ assert result['approved_by']=='reviewer@gmail.com'
+ assert c.docs[p['_id']]['status']=='approved'
+ with pytest.raises(LookupError): s.approve_market(p['_id'],approved_by='reviewer@gmail.com')
