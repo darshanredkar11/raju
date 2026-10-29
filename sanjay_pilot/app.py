@@ -105,12 +105,26 @@ class MarketResearchInput(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok":True,"database_configured":pilot is not None,"google_sign_in_configured":hasattr(oauth,"google"),"llm_configured":bool(os.getenv("LLM_API_KEY")),"market_research_configured":bool(os.getenv("TAVILY_API_KEY") and os.getenv("LLM_API_KEY")),"outbound_email_enabled":False}
+    return {
+        "ok": True,
+        "database_configured": pilot is not None,
+        "google_sign_in_configured": hasattr(oauth, "google"),
+        "llm_configured": bool(os.getenv("LLM_API_KEY")),
+        "market_research_configured": bool(os.getenv("TAVILY_API_KEY") and os.getenv("LLM_API_KEY")),
+        "harvey_runtime_connected": False,
+        "agent_mode": "llm_api" if os.getenv("LLM_API_KEY") else "not_configured",
+        "outbound_email_enabled": False,
+    }
 
-@app.get("/",response_class=HTMLResponse)
-def home():
-    dashboard=Path(__file__).with_name("dashboard.html")
-    return HTMLResponse(dashboard.read_text(encoding="utf-8"))
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    # Never send the authenticated application shell to an anonymous visitor.
+    page = "dashboard.html" if request.session.get("user") else "login.html"
+    return HTMLResponse(Path(__file__).with_name(page).read_text(encoding="utf-8"))
+
+@app.get("/manual", response_class=HTMLResponse)
+def user_manual(user=Depends(current_user)):
+    return HTMLResponse(Path(__file__).with_name("manual.html").read_text(encoding="utf-8"))
 
 @app.head("/")
 def home_head():
