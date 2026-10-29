@@ -48,7 +48,7 @@ Free web services can sleep when idle, and their local filesystem is not durable
 
 ## Product catalogue / TDS / SDS
 
-Use only verified source facts from Sanjay Chemicals' catalogue, technical data sheets and safety data sheets when drafting. This pilot stores document metadata references and accepts supplied product facts; it does not yet ingest PDFs or extract facts from uploaded TDS/SDS files. Do not treat a generated draft as a verified technical or regulatory statement.
+Upload catalogue, TDS and SDS PDFs from the dashboard. The pilot limits uploads to 10 MB and 200 pages, validates the PDF signature, stores the original in MongoDB GridFS, extracts searchable text and records a SHA-256 checksum. Image-only/scanned PDFs are rejected with an OCR-required message. Select the uploaded documents when generating a draft; their extracted text is supplied as source context. Do not treat a generated draft as a verified technical or regulatory statement; a human must verify specifications and claims against the original document.
 
 ## Security and operational limits
 
