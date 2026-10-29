@@ -1,10 +1,11 @@
 # Sanjay Chemicals — Harvey Sales Pilot
 
-An agent-first sales workspace for Sanjay Chemicals. The home screen is a persistent chat with the sales agent, daily progress and pending approvals. The current implementation is the safe sales desk foundation; it is not yet directly wired to Harvey's upstream autonomous runtime.
+An agent-first sales workspace for Sanjay Chemicals. The home screen is a persistent chat with the sales agent, daily progress and pending approvals. The current implementation is a sales desk foundation; it is not wired to Harvey's upstream autonomous runtime. Chat currently calls a configurable OpenAI-compatible LLM API.
 
 ## Pilot scope
 
-- Google sign-in accepts any verified Google account; no Workspace/domain allowlist is required. Every signed-in account currently shares the same workspace, so this is intentionally open access.
+- Google sign-in accepts any verified Google account; no Workspace/domain allowlist is required. Each account's chat, uploaded documents, market proposals and drafts are scoped to that email by default. This is per-account isolation, not yet a shared organisation/team workspace or a full RBAC implementation.
+- Anonymous visitors receive a standalone login page only; the dashboard shell is served only for a valid session. `/manual` is an authenticated in-product operator guide.
 - MongoDB Atlas Free is the durable record store; a bounded in-memory TTL/LRU cache reduces repeat reads.
 - Persistent agent chat with recent conversation context, product-document context and daily progress.
 - Chat can trigger evidence-backed market research and create email drafts that remain pending approval.
@@ -35,7 +36,7 @@ The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 ch
 - `MONGODB_DATABASE`: defaults to `sanjay_sales`.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Google OAuth web client.
 - `GOOGLE_REDIRECT_URI`: `https://YOUR-SERVICE.onrender.com/auth/google/callback`; register this exact URI in Google Cloud Console.
-- Any verified Google account can sign in; no Google Workspace domain or email allowlist is required. The Google OAuth web client still must be configured. Because this is a shared workspace, every signed-in account can access its business data; use only with that access model in mind.
+- Any verified Google account can sign in; no Google Workspace domain or email allowlist is required. The Google OAuth web client still must be configured. Records are scoped per account. A shared team workspace with administrator-managed membership and roles is not implemented yet.
 - `SESSION_SECRET`: at least 32 random characters. Keep it private.
 - `TAVILY_API_KEY`: enables web search for market research (external search usage is subject to the provider's plan and limits).
 - `LLM_API_KEY`, optionally `LLM_BASE_URL` and `LLM_MODEL`.
@@ -56,7 +57,7 @@ Upload catalogue, TDS and SDS PDFs from the dashboard. The pilot limits uploads 
 ## Security and operational limits
 
 - Use HTTPS; only the Google OAuth callback should be registered.
-- Any verified Google account can sign in. This is not appropriate for confidential customer data until workspace roles and access controls are added.
+- Any verified Google account can sign in, with per-account record scoping. This is not a substitute for organisation-level RBAC, audit policy, backups, retention controls and security review before production data.
 - Keep outbound email disabled. No SMTP/Gmail send integration is present.
 - Market proposals are not automatically approved or activated as campaign targets.
 - Research evidence is stored as a URL and confidence score; humans must verify source quality.
