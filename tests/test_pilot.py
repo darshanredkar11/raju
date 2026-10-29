@@ -44,3 +44,18 @@ def test_market_is_not_automatically_approved():
 
 def test_prohibited_claim_blocked():
  with pytest.raises(ValidationError):validate_draft(recipient='buyer@example.com',subject='Hello',body='We offer guaranteed purity.')
+
+
+def test_app_starts_with_google_only_routes_and_protects_api(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','s'*48)
+ monkeypatch.delenv('MONGODB_URI',raising=False)
+ monkeypatch.delenv('GOOGLE_CLIENT_ID',raising=False)
+ monkeypatch.delenv('GOOGLE_CLIENT_SECRET',raising=False)
+ app_module=importlib.import_module('sanjay_pilot.app')
+ client=TestClient(app_module.app)
+ assert client.get('/health').status_code==200
+ assert client.get('/').status_code==200
+ assert client.get('/api/pending').status_code==401
+ assert client.get('/auth/password').status_code==404
