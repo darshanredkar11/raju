@@ -2,12 +2,16 @@ from __future__ import annotations
 import os, secrets, time
 from collections import OrderedDict, deque
 from typing import Annotated
-from fastapi import FastAPI, Depends, Header, HTTPException, Request
+from fastapi import FastAPI, Depends, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from pymongo import MongoClient
+from gridfs import GridFSBucket
+from pypdf import PdfReader
+from io import BytesIO
+import hashlib, re
 from .auth import allowed_google_email, require_session_secret
 from .cache import TTLCache
 from .llm import generate_sales_draft, LLMConfigurationError
@@ -19,10 +23,11 @@ app.add_middleware(SessionMiddleware,secret_key=require_session_secret(),same_si
 oauth=OAuth()
 if os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"):
     oauth.register(name="google",client_id=os.environ["GOOGLE_CLIENT_ID"],client_secret=os.environ["GOOGLE_CLIENT_SECRET"],server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",client_kwargs={"scope":"openid email profile"})
-mongo=None; pilot=None
+mongo=None; pilot=None; product_bucket=None
 if os.getenv("MONGODB_URI"):
     mongo=MongoClient(os.environ["MONGODB_URI"],serverSelectionTimeoutMS=5000,connectTimeoutMS=5000,connect=False)
     db=mongo[os.getenv("MONGODB_DATABASE","sanjay_sales")]
+    product_bucket=GridFSBucket(db,bucket_name="product_docs")
     pilot=SalesPilot(db["sales_records"],TTLCache(max_items=512,ttl_seconds=60))
 
 _hits=OrderedDict()
@@ -62,7 +67,8 @@ class DraftInput(BaseModel):
 class GenerateInput(BaseModel):
     model_config=ConfigDict(extra="forbid")
     recipient:str=Field(min_length=3,max_length=254)
-    product_facts:str=Field(min_length=10,max_length=6000)
+    product_facts:str=Field(default="",max_length=6000)
+    source_ids:list[str]=Field(default_factory=list,max_length=20)
     buyer_context:str=Field(min_length=10,max_length=6000)
     goal:str=Field(default="request a short introductory conversation",max_length=300)
 
@@ -73,13 +79,15 @@ def health():
 @app.get("/",response_class=HTMLResponse)
 def home():
     return HTMLResponse("""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sanjay Chemicals | Sales Desk</title><style>
-body{font:16px system-ui;background:#f4f6f8;color:#18212b;margin:0}main{max-width:1000px;margin:auto;padding:24px}header,.panel{background:white;border:1px solid #e0e5ea;border-radius:14px;padding:20px;margin:14px 0}h1{margin:0 0 6px}small{color:#5d6b79}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}input,textarea,button{font:inherit;width:100%;box-sizing:border-box;padding:10px;margin:5px 0;border:1px solid #c8d0d8;border-radius:8px}textarea{min-height:100px}button{background:#173b57;color:white;border:0;cursor:pointer}button.secondary{background:#e9eef2;color:#18212b}.item{border-top:1px solid #e0e5ea;padding:12px 0;overflow-wrap:anywhere}.status{font-weight:600}#app{display:none}#msg{white-space:pre-wrap;color:#8a3100}</style></head><body><main><header><h1>Sanjay Chemicals · Sales Desk</h1><small>Market proposals and email drafts. Nothing is sent from this pilot.</small><p id="identity">Checking sign-in…</p><button id="login" onclick="location.href='/auth/google'">Continue with Google</button><button id="logout" class="secondary" style="display:none" onclick="logout()">Sign out</button></header><div id="app"><div class="grid"><section class="panel"><h2>Propose a market</h2><form id="marketForm"><input name="market" placeholder="Market / country" required maxlength="120"><textarea name="rationale" placeholder="Why this market fits the product portfolio" required minlength="10" maxlength="1500"></textarea><input name="evidence_url" type="url" placeholder="HTTPS evidence URL" required><input name="confidence" type="number" min="0" max="1" step="0.01" value="0.5" required><button>Submit for approval</button></form></section><section class="panel"><h2>Draft outreach</h2><form id="draftForm"><input name="recipient" type="email" placeholder="Buyer email" required maxlength="254"><textarea name="product_facts" placeholder="Verified facts from catalogue / TDS / SDS only" required minlength="10" maxlength="6000"></textarea><textarea name="buyer_context" placeholder="Buyer and company context, including source evidence" required minlength="10" maxlength="6000"></textarea><input name="goal" value="Request a short introductory conversation" maxlength="300"><button>Generate draft for review</button></form></section></div><section class="panel"><h2>Pending approvals</h2><button class="secondary" onclick="loadPending()">Refresh</button><div id="pending"></div></section></div><p id="msg"></p></main><script>
+body{font:16px system-ui;background:#f4f6f8;color:#18212b;margin:0}main{max-width:1000px;margin:auto;padding:24px}header,.panel{background:white;border:1px solid #e0e5ea;border-radius:14px;padding:20px;margin:14px 0}h1{margin:0 0 6px}small{color:#5d6b79}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}input,textarea,button{font:inherit;width:100%;box-sizing:border-box;padding:10px;margin:5px 0;border:1px solid #c8d0d8;border-radius:8px}textarea{min-height:100px}button{background:#173b57;color:white;border:0;cursor:pointer}button.secondary{background:#e9eef2;color:#18212b}.item{border-top:1px solid #e0e5ea;padding:12px 0;overflow-wrap:anywhere}.status{font-weight:600}#app{display:none}#msg{white-space:pre-wrap;color:#8a3100}</style></head><body><main><header><h1>Sanjay Chemicals · Sales Desk</h1><small>Market proposals and email drafts. Nothing is sent from this pilot.</small><p id="identity">Checking sign-in…</p><button id="login" onclick="location.href='/auth/google'">Continue with Google</button><button id="logout" class="secondary" style="display:none" onclick="logout()">Sign out</button></header><div id="app"><section class="panel"><h2>Product documents</h2><form id="productForm"><select name="kind" required><option value="catalogue">Catalogue</option><option value="TDS">TDS</option><option value="SDS">SDS</option></select><input type="file" name="file" accept="application/pdf,.pdf" required><button>Upload PDF</button></form><div id="products">No documents uploaded yet.</div><small>PDF text extraction only; scanned/image-only PDFs need OCR before use.</small></section><div class="grid"><section class="panel"><h2>Propose a market</h2><form id="marketForm"><input name="market" placeholder="Market / country" required maxlength="120"><textarea name="rationale" placeholder="Why this market fits the product portfolio" required minlength="10" maxlength="1500"></textarea><input name="evidence_url" type="url" placeholder="HTTPS evidence URL" required><input name="confidence" type="number" min="0" max="1" step="0.01" value="0.5" required><button>Submit for approval</button></form></section><section class="panel"><h2>Draft outreach</h2><form id="draftForm"><input name="recipient" type="email" placeholder="Buyer email" required maxlength="254"><textarea name="product_facts" placeholder="Optional: add verified product facts if no document is selected" maxlength="6000"></textarea><div id="selectedProducts"><small>Select uploaded documents below, or paste facts above.</small></div><textarea name="buyer_context" placeholder="Buyer and company context, including source evidence" required minlength="10" maxlength="6000"></textarea><input name="goal" value="Request a short introductory conversation" maxlength="300"><button>Generate draft for review</button></form></section></div><section class="panel"><h2>Pending approvals</h2><button class="secondary" onclick="loadPending()">Refresh</button><div id="pending"></div></section></div><p id="msg"></p></main><script>
 let csrf='';const msg=t=>document.getElementById('msg').textContent=t;async function api(path,opts={}){opts.headers={...(opts.headers||{}),'Content-Type':'application/json'};if(csrf)opts.headers['X-CSRF-Token']=csrf;const r=await fetch(path,{...opts,credentials:'same-origin'});if(r.status===401){showSignedOut();throw Error('Sign in with Google first')}const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));return d}
 function showSignedOut(){document.getElementById('login').style.display='block';document.getElementById('logout').style.display='none';document.getElementById('app').style.display='none';document.getElementById('identity').textContent='Not signed in'}
-async function boot(){try{const me=await api('/me');document.getElementById('identity').textContent='Signed in as '+me.user.email;document.getElementById('login').style.display='none';document.getElementById('logout').style.display='block';document.getElementById('app').style.display='block';await loadPending()}catch(e){showSignedOut()}}
+async function boot(){try{const me=await api('/me');document.getElementById('identity').textContent='Signed in as '+me.user.email;document.getElementById('login').style.display='none';document.getElementById('logout').style.display='block';document.getElementById('app').style.display='block';await loadPending();await loadProducts()}catch(e){showSignedOut()}}
+async function loadProducts(){try{const items=await api('/api/products');const root=document.getElementById('products');root.innerHTML='';if(!items.length){root.textContent='No documents uploaded yet.';return}for(const x of items){const label=document.createElement('label');label.style.display='block';const cb=document.createElement('input');cb.type='checkbox';cb.value=x._id;cb.style.width='auto';label.append(cb,document.createTextNode(' '+x.name+' · '+x.kind+' · '+x.pages+' pages'));root.append(label)}}catch(e){msg(e.message)}}
 async function loadPending(){try{const items=await api('/api/pending');const root=document.getElementById('pending');root.innerHTML='';if(!items.length){root.textContent='Nothing waiting for approval.';return}for(const x of items){const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=x.type==='market_proposal'?'Market: '+x.market:'Email: '+x.subject;el.append(title);const detail=document.createElement('p');detail.textContent=x.type==='market_proposal'?x.rationale+' · confidence '+x.confidence+' · '+x.evidence_url:x.recipient+'\n'+x.body;el.append(detail);if(x.type==='email_draft'||x.type==='market_proposal'){const b=document.createElement('button');b.textContent='Approve '+(x.type==='market_proposal'?'market proposal':'exact email draft');b.onclick=async()=>{try{if(x.type==='market_proposal')await api('/api/markets/'+encodeURIComponent(x._id)+'/approve',{method:'POST',body:'{}'});else await api('/api/drafts/'+encodeURIComponent(x._id)+'/approve',{method:'POST',body:JSON.stringify({recipient:x.recipient,subject:x.subject,body:x.body})});msg('Approval recorded. No email was sent.');await loadPending()}catch(e){msg(e.message)}};el.append(b)}root.append(el)}}catch(e){msg(e.message)}}
+document.getElementById('productForm').onsubmit=async e=>{e.preventDefault();try{const r=await fetch('/api/products/upload',{method:'POST',headers:{'X-CSRF-Token':csrf},body:new FormData(e.target),credentials:'same-origin'});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));msg('Uploaded '+d.name+'; '+d.pages+' pages indexed.');e.target.reset();await loadProducts()}catch(x){msg(x.message)}};
 document.getElementById('marketForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.confidence=Number(f.confidence);await api('/api/markets',{method:'POST',body:JSON.stringify(f)});msg('Market proposal saved for approval.');e.target.reset();await loadPending()}catch(x){msg(x.message)}};
-document.getElementById('draftForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));const d=await api('/api/drafts/generate',{method:'POST',body:JSON.stringify(f)});msg('Draft saved for approval: '+d.subject);await loadPending()}catch(x){msg(x.message)}};
+document.getElementById('draftForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.source_ids=Array.from(document.querySelectorAll('#products input:checked')).map(x=>x.value);const d=await api('/api/drafts/generate',{method:'POST',body:JSON.stringify(f)});msg('Draft saved for approval: '+d.subject);await loadPending()}catch(x){msg(x.message)}};
 async function logout(){try{await api('/auth/logout',{method:'POST',body:'{}'});csrf='';showSignedOut();msg('Signed out')}catch(e){msg(e.message)}}
 (async()=>{try{const q=new URLSearchParams(location.search);if(q.get('signed_in'))history.replaceState({},'', '/');const r=await fetch('/me',{credentials:'same-origin'});if(r.ok){const d=await r.json();csrf=d.csrf_token||''}await boot()}catch(e){showSignedOut()}})();
 </script></body></html>""")
@@ -107,6 +115,32 @@ def me(request:Request,user=Depends(current_user)):return {'user':user,'csrf_tok
 def logout(request:Request,user=Depends(current_user),_:None=Depends(require_csrf)):
     request.session.clear();return {'signed_out':True}
 
+@app.post('/api/products/upload')
+async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Request=None,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
+    rate_limit(request,'upload:'+user['email'],10)
+    if kind not in {'catalogue','TDS','SDS'}: raise HTTPException(422,'kind must be catalogue, TDS or SDS')
+    raw=await file.read(10*1024*1024+1)
+    if len(raw)>10*1024*1024: raise HTTPException(413,'PDF must be 10 MB or smaller')
+    if not raw.startswith(b'%PDF-'): raise HTTPException(415,'Only valid PDF documents are accepted')
+    try:
+        reader=PdfReader(BytesIO(raw),strict=True)
+        if len(reader.pages)>200: raise HTTPException(413,'PDF must have 200 pages or fewer')
+        extracted=' '.join((page.extract_text() or '') for page in reader.pages)
+    except HTTPException: raise
+    except Exception as exc: raise HTTPException(422,'PDF could not be parsed') from exc
+    extracted=re.sub(r'\\s+',' ',extracted).strip()[:100000]
+    if len(extracted)<20: raise HTTPException(422,'No usable text found. Scanned PDFs need OCR before upload.')
+    name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].split('\\\\')[-1])[:160]
+    checksum=hashlib.sha256(raw).hexdigest()
+    file_id=product_bucket.upload_from_stream(name,raw,metadata={'kind':kind,'sha256':checksum,'uploaded_by':user['email']})
+    doc={'_id':secrets.token_hex(16),'type':'product_document','name':name,'kind':kind,'checksum':checksum,'gridfs_id':str(file_id),'text':extracted,'pages':len(reader.pages),'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
+    svc.collection.insert_one(doc);svc.cache.set('product:'+doc['_id'],doc)
+    return {'_id':doc['_id'],'name':name,'kind':kind,'pages':doc['pages'],'checksum':checksum}
+
+@app.get('/api/products')
+def list_products(user=Depends(current_user),svc=Depends(get_pilot)):
+    return list(svc.collection.find({'type':'product_document'},{'_id':1,'name':1,'kind':1,'pages':1,'created_at':1}).sort('created_at',-1).limit(100))
+
 @app.post('/api/markets')
 def create_market(payload:MarketInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
@@ -123,8 +157,14 @@ def approve_market(market_id:str,request:Request,user=Depends(current_user),_:No
 async def generate_draft(payload:GenerateInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
     try:
-        generated=await generate_sales_draft(product_facts=payload.product_facts,buyer_context=payload.buyer_context,goal=payload.goal)
-        return svc.create_email_draft(payload.recipient,generated['subject'],generated['body'])
+        facts=payload.product_facts.strip()
+        for source_id in payload.source_ids:
+            doc=svc.collection.find_one({'_id':source_id,'type':'product_document'})
+            if not doc: raise HTTPException(422,'Unknown product document ID')
+            facts += '\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
+        if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
+        generated=await generate_sales_draft(product_facts=facts,buyer_context=payload.buyer_context,goal=payload.goal)
+        return svc.create_email_draft(payload.recipient,generated['subject'],generated['body'],source_ids=payload.source_ids)
     except LLMConfigurationError as exc:raise HTTPException(503,str(exc)) from exc
     except ValidationError as exc:raise HTTPException(422,str(exc)) from exc
 
