@@ -218,6 +218,7 @@ def test_manual_draft_api_and_approval_reject_modified_body(monkeypatch):
  assert changed.status_code==409
  approved=client.post('/api/drafts/'+draft['_id']+'/approve',json={'recipient':'buyer@example.com','subject':'Introduction','body':'Could we discuss your requirements?'})
  assert approved.status_code==200 and approved.json()['sent'] is False
+ assert approved.json()['approved_by']=='tester@gmail.com'
  module.app.dependency_overrides.clear()
 
 
@@ -258,6 +259,7 @@ def test_chat_can_create_pending_market_proposals(monkeypatch):
  assert len(response.json()['actions'])==1
  proposal=next(d for d in store.docs.values() if d.get('type')=='market_proposal')
  assert proposal['status']=='pending_approval' and proposal['approved_at'] is None
+ assert proposal['created_by']=='tester@gmail.com'
  module.app.dependency_overrides.clear()
 
 def test_chat_can_create_email_draft_but_never_send(monkeypatch):
@@ -278,6 +280,7 @@ def test_chat_can_create_email_draft_but_never_send(monkeypatch):
  assert response.status_code==200,response.text
  draft=next(d for d in store.docs.values() if d.get('type')=='email_draft')
  assert draft['status']=='pending_approval' and draft['sent'] is False
+ assert draft['created_by']=='tester@gmail.com'
  assert 'Nothing has been sent' in response.json()['reply']
  module.app.dependency_overrides.clear()
 
