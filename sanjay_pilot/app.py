@@ -57,7 +57,7 @@ class MarketInput(BaseModel):
     market:str=Field(min_length=2,max_length=120)
     rationale:str=Field(min_length=10,max_length=1500)
     evidence_url:str=Field(min_length=10,max_length=2048)
-    confidence:float=Field(ge=0,le=1)
+    confidence:float=Field(strict=True,ge=0,le=1)
 class DraftInput(BaseModel):
     model_config=ConfigDict(extra="forbid")
     recipient:str=Field(min_length=3,max_length=254)
