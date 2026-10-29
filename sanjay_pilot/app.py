@@ -65,10 +65,9 @@ def get_pilot():
             raise HTTPException(503,"MongoDB is unavailable or required indexes could not be initialized") from exc
     return pilot
 
-def get_product_document(svc, source_id):
-    doc=svc.cache.get('product:'+source_id)
-    if doc is None:
-        doc=svc.collection.find_one({'_id':source_id,'type':'product_document'})
+def get_product_document(svc, source_id, owner_email):
+    # A verified Google identity gets its own isolated workspace by default.
+    doc=svc.collection.find_one({'_id':source_id,'type':'product_document','created_by':owner_email})
         if doc is not None: svc.cache.set('product:'+source_id,doc)
     return doc
 
@@ -170,7 +169,7 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
     if len(extracted)<20: raise HTTPException(422,'No usable text found. Scanned PDFs need OCR before upload.')
     name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].replace(chr(92),'/').split('/')[-1])[:160]
     checksum=hashlib.sha256(raw).hexdigest()
-    existing=svc.collection.find_one({'type':'product_document','checksum':checksum})
+    existing=svc.collection.find_one({'type':'product_document','checksum':checksum,'created_by':user['email']})
     if existing:
         return {'_id':str(existing['_id']),'name':existing.get('name',name),'kind':existing.get('kind',kind),'pages':existing.get('pages',0),'checksum':checksum,'duplicate':True}
     file_id=product_bucket.upload_from_stream(name,raw,metadata={'kind':kind,'sha256':checksum,'uploaded_by':user['email']})
@@ -180,7 +179,7 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
 
 @app.get('/api/products')
 def list_products(user=Depends(current_user),svc=Depends(get_pilot)):
-    return list(svc.collection.find({'type':'product_document'},{'_id':1,'name':1,'kind':1,'pages':1,'created_at':1}).sort('created_at',-1).limit(100))
+    return list(svc.collection.find({'type':'product_document','created_by':user['email']},{'_id':1,'name':1,'kind':1,'pages':1,'created_at':1}).sort('created_at',-1).limit(100))
 
 def _today_bounds():
     from datetime import datetime, timezone
@@ -195,11 +194,11 @@ def _progress_data(svc, user_email):
     coll=svc.collection
     def count(query): return coll.count_documents(query)
     chat_count=count({'type':'chat_message','owner_email':user_email,'created_at':{'$gte':start,'$lt':now}})
-    doc_count=count({'type':'product_document','created_at':{'$gte':start,'$lt':now}})
-    market_count=count({'type':'market_proposal','created_at':{'$gte':start,'$lt':now}})
-    draft_count=count({'type':'email_draft','created_at':{'$gte':start,'$lt':now}})
-    pending_total=count({'status':'pending_approval'})
-    pending_items=list(coll.find({'status':'pending_approval'},{'_id':1,'type':1,'market':1,'subject':1,'created_at':1}).sort('created_at',-1).limit(5))
+    doc_count=count({'type':'product_document','created_by':user_email,'created_at':{'$gte':start,'$lt':now}})
+    market_count=count({'type':'market_proposal','created_by':user_email,'created_at':{'$gte':start,'$lt':now}})
+    draft_count=count({'type':'email_draft','created_by':user_email,'created_at':{'$gte':start,'$lt':now}})
+    pending_total=count({'status':'pending_approval','created_by':user_email})
+    pending_items=list(coll.find({'status':'pending_approval','created_by':user_email},{'_id':1,'type':1,'market':1,'subject':1,'created_at':1}).sort('created_at',-1).limit(5))
     return {'today':{'date_label':now.astimezone(__import__('zoneinfo').ZoneInfo('Asia/Kolkata')).strftime('%A, %d %b'),'actions':chat_count+doc_count+market_count+draft_count,'chat_messages':chat_count,'documents':doc_count,'markets':market_count,'drafts':draft_count},'pending':{'total':pending_total,'items':[{'_id':str(x['_id']),'kind':x.get('type','item'),'title':x.get('market') or x.get('subject') or 'Approval item','created_at':x.get('created_at')} for x in pending_items]},'documents':{'total':count({'type':'product_document'})},'markets':{'today':market_count}}
 
 @app.get('/api/progress')
@@ -220,8 +219,8 @@ async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:No
     coll=svc.collection
     history=list(coll.find({'type':'chat_message','owner_email':user['email']},{'_id':0,'role':1,'content':1,'created_at':1}).sort('created_at',-1).limit(12))
     history.reverse()
-    docs=list(coll.find({'type':'product_document'},{'_id':0,'name':1,'kind':1,'text':1,'created_at':1}).sort('created_at',-1).limit(5))
-    pending=list(coll.find({'status':'pending_approval'},{'_id':0,'type':1,'market':1,'rationale':1,'evidence_url':1,'subject':1,'recipient':1,'created_at':1}).sort('created_at',-1).limit(10))
+    docs=list(coll.find({'type':'product_document','created_by':user['email']},{'_id':0,'name':1,'kind':1,'text':1,'created_at':1}).sort('created_at',-1).limit(5))
+    pending=list(coll.find({'status':'pending_approval','created_by':user['email']},{'_id':0,'type':1,'market':1,'rationale':1,'evidence_url':1,'subject':1,'recipient':1,'created_at':1}).sort('created_at',-1).limit(10))
     progress=_progress_data(svc,user['email'])['today']
     user_doc={'_id':secrets.token_hex(16),'type':'chat_message','owner_email':user['email'],'role':'user','content':message,'created_at':now}
     coll.insert_one(user_doc)
@@ -277,20 +276,20 @@ async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:No
 
 @app.get('/api/activity')
 def activity(user=Depends(current_user),svc=Depends(get_pilot)):
-    docs=list(svc.collection.find({'$or':[{'type':'chat_message','owner_email':user['email']},{'type':{'$in':['product_document','market_proposal','email_draft']}}]},{'_id':0,'type':1,'role':1,'content':1,'name':1,'kind':1,'market':1,'subject':1,'status':1,'created_at':1}).sort('created_at',-1).limit(100))
+    docs=list(svc.collection.find({'$or':[{'type':'chat_message','owner_email':user['email']},{'type':'product_document','created_by':user['email']},{'type':'market_proposal','created_by':user['email']},{'type':'email_draft','created_by':user['email']}]},{'_id':0,'type':1,'role':1,'content':1,'name':1,'kind':1,'market':1,'subject':1,'status':1,'created_at':1}).sort('created_at',-1).limit(100))
     labels={'chat_message':('Chat','◌'),'product_document':('Document uploaded','▤'),'market_proposal':('Market proposal','⌕'),'email_draft':('Email draft','✉')}
     return [{'title':labels.get(x.get('type'),('Activity','◷'))[0] if x.get('type')!='chat_message' else ('You messaged the agent' if x.get('role')=='user' else 'Agent responded'),'icon':labels.get(x.get('type'),('Activity','◷'))[1],'detail':(x.get('name') or x.get('market') or x.get('subject') or x.get('content',''))[:240],'status':x.get('status','recorded'),'created_at':x.get('created_at').isoformat() if hasattr(x.get('created_at'),'isoformat') else str(x.get('created_at',''))} for x in docs]
 
 @app.get('/api/research/recent')
 def recent_research(user=Depends(current_user),svc=Depends(get_pilot)):
-    return list(svc.collection.find({'type':'market_proposal'},{'_id':1,'market':1,'rationale':1,'evidence_url':1,'confidence':1,'status':1,'created_at':1}).sort('created_at',-1).limit(50))
+    return list(svc.collection.find({'type':'market_proposal','created_by':user['email']},{'_id':1,'market':1,'rationale':1,'evidence_url':1,'confidence':1,'status':1,'created_at':1}).sort('created_at',-1).limit(50))
 
 @app.post('/api/markets/research')
 async def research_markets(payload:MarketResearchInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'research:'+user['email'],5)
     facts=payload.product_facts.strip()
     for source_id in payload.source_ids:
-        doc=get_product_document(svc,source_id)
+        doc=get_product_document(svc,source_id,user['email'])
         if not doc: raise HTTPException(422,'Unknown product document ID')
         facts+='\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
     if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
@@ -312,7 +311,9 @@ def create_market(payload:MarketInput,request:Request,user=Depends(current_user)
 @app.post('/api/markets/{market_id}/approve')
 def approve_market(market_id:str,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.approve_market(market_id,approved_by=user['email'])
+    try:
+        if not svc.collection.find_one({'_id':market_id,'type':'market_proposal','created_by':user['email'],'status':'pending_approval'}): raise LookupError('pending market proposal not found')
+        return svc.approve_market(market_id,approved_by=user['email'])
     except LookupError as exc:raise HTTPException(404,str(exc)) from exc
 
 @app.post('/api/drafts/generate')
@@ -321,7 +322,7 @@ async def generate_draft(payload:GenerateInput,request:Request,user=Depends(curr
     try:
         facts=payload.product_facts.strip()
         for source_id in payload.source_ids:
-            doc=get_product_document(svc,source_id)
+            doc=get_product_document(svc,source_id,user['email'])
             if not doc: raise HTTPException(422,'Unknown product document ID')
             facts += '\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
         if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
@@ -338,11 +339,13 @@ def create_draft(payload:DraftInput,request:Request,user=Depends(current_user),_
 
 @app.get('/api/pending')
 def pending(user=Depends(current_user),svc=Depends(get_pilot)):
-    return list(svc.collection.find({'status':'pending_approval'},{'_id':1,'type':1,'market':1,'rationale':1,'evidence_url':1,'confidence':1,'recipient':1,'subject':1,'body':1,'created_at':1}).sort('created_at',-1).limit(100))
+    return list(svc.collection.find({'status':'pending_approval','created_by':user['email']},{'_id':1,'type':1,'market':1,'rationale':1,'evidence_url':1,'confidence':1,'recipient':1,'subject':1,'body':1,'created_at':1}).sort('created_at',-1).limit(100))
 
 @app.post('/api/drafts/{draft_id}/approve')
 def approve_draft(draft_id:str,payload:DraftInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.approve_email_draft(draft_id,{'recipient':payload.recipient.lower(),'subject':payload.subject,'body':payload.body},approved_by=user['email'])
+    try:
+        if not svc.collection.find_one({'_id':draft_id,'type':'email_draft','created_by':user['email'],'status':'pending_approval','sent':False}): raise LookupError('pending draft not found')
+        return svc.approve_email_draft(draft_id,{'recipient':payload.recipient.lower(),'subject':payload.subject,'body':payload.body},approved_by=user['email'])
     except LookupError as exc:raise HTTPException(404,str(exc)) from exc
     except ValidationError as exc:raise HTTPException(409,str(exc)) from exc
