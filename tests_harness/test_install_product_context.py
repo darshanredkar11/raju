@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import importlib.util
 
 
@@ -10,42 +9,65 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
 
 
-def test_install_appends_context_and_preserves_backup(tmp_path: Path):
+def make_fixture(tmp_path: Path):
+    repo = tmp_path / "repo"
+    context = repo / "harness"
+    context.mkdir(parents=True)
+    (context / "SANJAY_CHEMICALS_PRODUCT_CONTEXT.md").write_text(
+        "## Verified product context\nNever invent product claims.\n", encoding="utf-8")
+    (context / "SANJAY_SALES_PLAYBOOK.md").write_text(
+        "## RFQ workflow\nCapture quantity and delivery location.\n", encoding="utf-8")
     home = tmp_path / "harvey"
     skills = home / "skills"
     skills.mkdir(parents=True)
-    target = skills / "product_knowledge.md"
-    target.write_text("# Existing Harvey training\nVerified product notes.\n", encoding="utf-8")
-    context = tmp_path / "context.md"
-    context.write_text("## Verified company context\nDo not invent product claims.\n", encoding="utf-8")
+    (skills / "product_knowledge.md").write_text("# Existing product skill\nExisting product notes.\n", encoding="utf-8")
+    (skills / "sales_methodology.md").write_text("# Existing sales skill\nExisting sales rules.\n", encoding="utf-8")
+    return home, repo, skills
 
-    result = MODULE.install(home, context)
 
-    updated = target.read_text(encoding="utf-8")
-    backups = list(skills.glob("product_knowledge.md.backup-*"))
-    assert result.startswith("installed; backup=")
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == "# Existing Harvey training\nVerified product notes.\n"
-    assert "Verified product notes." in updated
-    assert "Do not invent product claims." in updated
-    assert updated.count(MODULE.START) == 1
-    assert updated.count(MODULE.END) == 1
+def test_installs_into_native_skills_and_preserves_backups(tmp_path: Path):
+    home, repo, skills = make_fixture(tmp_path)
+    result = MODULE.install(home, repo)
+
+    product = (skills / "product_knowledge.md").read_text(encoding="utf-8")
+    sales = (skills / "sales_methodology.md").read_text(encoding="utf-8")
+    assert len(result) == 2
+    assert "Never invent product claims." in product
+    assert "Capture quantity and delivery location." in sales
+    assert "Existing product notes." in product
+    assert "Existing sales rules." in sales
+    assert len(list(skills.glob("product_knowledge.md.backup-*"))) == 1
+    assert len(list(skills.glob("sales_methodology.md.backup-*"))) == 1
 
 
 def test_install_is_idempotent(tmp_path: Path):
-    home = tmp_path / "harvey"
-    skills = home / "skills"
-    skills.mkdir(parents=True)
-    target = skills / "product_knowledge.md"
-    target.write_text("# Existing Harvey training\n", encoding="utf-8")
-    context = tmp_path / "context.md"
-    context.write_text("## Context\nNo invented claims.\n", encoding="utf-8")
+    home, repo, skills = make_fixture(tmp_path)
+    MODULE.install(home, repo)
+    product_after_first = (skills / "product_knowledge.md").read_text(encoding="utf-8")
+    sales_after_first = (skills / "sales_methodology.md").read_text(encoding="utf-8")
 
-    first = MODULE.install(home, context)
-    after_first = target.read_text(encoding="utf-8")
-    second = MODULE.install(home, context)
+    result = MODULE.install(home, repo)
 
-    assert first.startswith("installed; backup=")
-    assert second == "already_installed"
-    assert target.read_text(encoding="utf-8") == after_first
+    assert result == [
+        "product_knowledge.md: already_installed",
+        "sales_methodology.md: already_installed",
+    ]
+    assert (skills / "product_knowledge.md").read_text(encoding="utf-8") == product_after_first
+    assert (skills / "sales_methodology.md").read_text(encoding="utf-8") == sales_after_first
     assert len(list(skills.glob("product_knowledge.md.backup-*"))) == 1
+    assert len(list(skills.glob("sales_methodology.md.backup-*"))) == 1
+
+
+def test_missing_native_skill_fails_before_any_change(tmp_path: Path):
+    home, repo, skills = make_fixture(tmp_path)
+    (skills / "sales_methodology.md").unlink()
+    before = (skills / "product_knowledge.md").read_text(encoding="utf-8")
+
+    try:
+        MODULE.install(home, repo)
+        assert False, "expected missing native skill to fail"
+    except FileNotFoundError:
+        pass
+
+    assert (skills / "product_knowledge.md").read_text(encoding="utf-8") == before
+    assert not list(skills.glob("*.backup-*"))
