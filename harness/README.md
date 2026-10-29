@@ -1,9 +1,9 @@
 # Harvey Native Harness — Sanjay Chemicals
 
-This branch is the integration/configuration layer for the **existing upstream Harvey runtime**. It is not a replacement dashboard, agent framework, or hosted sales app.
+This is the integration/configuration layer for the existing upstream Harvey runtime. It is not a replacement dashboard, agent framework, or hosted sales app.
 
 - Upstream runtime and UI: https://github.com/ethanplusai/harvey
-- Harvey owns its native dashboard, heartbeat, prospecting, writing, sending, reply handling, SQLite state, outbox approvals, deterministic pre-send gate, bounce controls, and kill switch.
+- Harvey owns its native dashboard, heartbeat, prospecting, writing, sending, reply handling, SQLite state, Outbox approvals, deterministic pre-send gate, bounce controls, and kill switch.
 - This repository contributes only the smallest business-specific overlay and read-only readiness checks.
 - No public runtime endpoint, second chat UI, second database, or separate notification service is introduced by default.
 
@@ -14,9 +14,9 @@ This branch is the integration/configuration layer for the **existing upstream H
 | Capability | First choice | Add another component only when… |
 |---|---|---|
 | Sales agent, pipeline, email, replies, approval queue | Harvey native features | A documented requirement cannot be met by native Harvey |
-| Product facts and sales instructions | `harvey train <official-product-site>` plus Harvey's existing `skills/product_knowledge.md` | Product facts cannot be represented safely in the native skill/config model |
+| Product facts and sales instructions | harvey train <official-product-site> plus Harvey's existing skills/product_knowledge.md | Product facts cannot be represented safely in the native skill/config model |
 | Durable agent state | Harvey's native SQLite database | A concrete cross-system/team reporting requirement needs shared storage |
-| Product document source of truth | Existing company catalogue/TDS/SDS files, linked or curated into Harvey's product knowledge | Retrieval over a large changing corpus is demonstrably needed; then evaluate an existing document/RAG system before writing one |
+| Product document source of truth | Existing company catalogue/TDS/SDS files, curated into Harvey's product knowledge | Retrieval over a large changing corpus is demonstrably needed; then evaluate an existing document/RAG system before writing one |
 | Research | Harvey's native Scout/discovery/profile workflow and existing research providers | Evidence from a specific source or product category is missing; add a provider adapter, not another autonomous agent by default |
 | Email delivery and replies | Harvey's built-in Gmail, Microsoft 365, or SMTP/IMAP provider and Outbox | A required channel is unsupported |
 | Operator notifications | Native dashboard/outbox first | A specific out-of-band alert requirement exists; evaluate an existing notification provider/service before building a service |
@@ -35,14 +35,12 @@ This branch is the integration/configuration layer for the **existing upstream H
 ## Start here
 
 1. Locate the existing Harvey checkout/runtime; do not install a second instance if one is already running.
-2. Back up its config, `.env`, `skills/`, and `data/`.
-3. Run Harvey's native training against the official Sanjay Chemicals website, if available: `harvey train <official-site-url>`. Verify the generated facts against actual product catalogues/TDS/SDS.
-4. Configure the native mailbox provider, but leave `channels.email.require_approval: true`.
-5. Run the read-only check from this repository:
+2. Back up its config, .env, skills/, and data/.
+3. Run Harvey's native training against the official Sanjay Chemicals website, if available: harvey train <official-site-url>. Verify the generated facts against actual product catalogues/TDS/SDS.
+4. Configure the native mailbox provider, but leave channels.email.require_approval: true.
+5. Run the read-only check with the existing Harvey Python environment:
 
-   ```bash
-   python scripts/harvey_preflight.py --harvey-home /path/to/harvey
-   ```
+       /path/to/harvey/.venv/bin/python scripts/harvey_preflight.py --harvey-home /path/to/harvey
 
 6. Start the existing native dashboard and runtime using Harvey's documented commands. Validate a test prospect and a draft; confirm the draft waits in the native Outbox. Do not approve/send it during the smoke test.
 
@@ -50,6 +48,6 @@ This branch is the integration/configuration layer for the **existing upstream H
 
 The script checks local files and configuration only. It does not authenticate to Harvey, inspect the running process, prove mailbox delivery, or claim end-to-end integration. Those require an explicit runtime smoke test on the machine where Harvey is installed.
 
-## Legacy pilot files
+## Component selection
 
-The prior web-app prototype may still exist in this branch for reference. It is **not** the target architecture and must not be deployed as a second sales UI. New work belongs in the native-runtime harness, config, validation, and integration adapters only when needed.
+See COMPONENT_SELECTION.md for the rule for deciding when to adopt a proven service versus build an adapter.
