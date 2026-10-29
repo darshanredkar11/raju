@@ -13,19 +13,27 @@ No second dashboard, chat UI, agent loop, memory database, email sender, or noti
 ## This branch currently contains
 
 - A reuse-first component strategy.
+- Source-grounded Sanjay Chemicals product context and safety rules.
+- An idempotent installer that adds those rules to Harvey's existing product_knowledge skill, with a backup.
 - A read-only preflight script for an existing Harvey checkout.
-- Safety tests that enforce human approval for outbound email.
+- Tests for approval enforcement and safe/idempotent skill installation.
 - No public service definition and no deployment step.
 
 The old Sanjay sales-pilot prototype files are retained temporarily as reference only; they are not the target runtime and must not be deployed as a separate app.
 
-## Run the preflight
+## Apply the product context
 
-Run it with the Python environment used by the existing Harvey installation so PyYAML is available:
+After the native Harvey product training exists, run:
+
+    python scripts/install_product_context.py --harvey-home /path/to/harvey
+
+The installer only edits skills/product_knowledge.md, makes a timestamped backup, and is idempotent. It does not touch Harvey's code, config, credentials, database, or dashboard.
+
+Then run the read-only check with the Python environment used by Harvey:
 
     /path/to/harvey/.venv/bin/python scripts/harvey_preflight.py --harvey-home /path/to/harvey
 
-This reads local files only. It does not start Harvey, modify config, call a model, send messages, or prove that a running runtime is connected. End-to-end verification must happen against the actual installed Harvey UI/runtime.
+The preflight reads local files only. It does not start Harvey, modify config, call a model, send messages, or prove that a running runtime is connected. End-to-end verification must happen against the actual installed Harvey UI/runtime.
 
 ## Safety defaults
 
