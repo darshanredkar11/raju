@@ -4,6 +4,7 @@ from collections import OrderedDict, deque
 from typing import Annotated
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -14,7 +15,7 @@ from io import BytesIO
 import hashlib, re
 from .auth import allowed_google_email, require_session_secret
 from .cache import TTLCache
-from .llm import generate_sales_draft, LLMConfigurationError
+from .llm import generate_sales_draft, generate_agent_reply, LLMConfigurationError
 from .service import SalesPilot
 from .research import search_market_sources, propose_markets_with_llm, MarketResearchConfigurationError, MarketResearchError
 import httpx
@@ -81,6 +82,10 @@ class GenerateInput(BaseModel):
     buyer_context:str=Field(min_length=10,max_length=6000)
     goal:str=Field(default="request a short introductory conversation",max_length=300)
 
+class ChatInput(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    message:str=Field(min_length=1,max_length=4000)
+
 class MarketResearchInput(BaseModel):
     model_config=ConfigDict(extra="forbid")
     product_facts:str=Field(default="",max_length=6000)
@@ -94,20 +99,8 @@ def health():
 
 @app.get("/",response_class=HTMLResponse)
 def home():
-    return HTMLResponse("""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sanjay Chemicals | Sales Desk</title><style>
-body{font:16px system-ui;background:#f4f6f8;color:#18212b;margin:0}main{max-width:1000px;margin:auto;padding:24px}header,.panel{background:white;border:1px solid #e0e5ea;border-radius:14px;padding:20px;margin:14px 0}h1{margin:0 0 6px}small{color:#5d6b79}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}input,textarea,button{font:inherit;width:100%;box-sizing:border-box;padding:10px;margin:5px 0;border:1px solid #c8d0d8;border-radius:8px}textarea{min-height:100px}button{background:#173b57;color:white;border:0;cursor:pointer}button.secondary{background:#e9eef2;color:#18212b}.item{border-top:1px solid #e0e5ea;padding:12px 0;overflow-wrap:anywhere}.status{font-weight:600}#app{display:none}#msg{white-space:pre-wrap;color:#8a3100}</style></head><body><main><header><h1>Sanjay Chemicals · Sales Desk</h1><small>Market proposals and email drafts. Nothing is sent from this pilot.</small><p id="identity">Checking sign-in…</p><button id="login" onclick="location.href='/auth/google'">Continue with Google</button><button id="logout" class="secondary" style="display:none" onclick="logout()">Sign out</button></header><div id="app"><section class="panel"><h2>Product documents</h2><form id="productForm"><select name="kind" required><option value="catalogue">Catalogue</option><option value="TDS">TDS</option><option value="SDS">SDS</option></select><input type="file" name="file" accept="application/pdf,.pdf" required><button>Upload PDF</button></form><div id="products">No documents uploaded yet.</div><small>PDF text extraction only; scanned/image-only PDFs need OCR before use.</small></section><div class="grid"><section class="panel"><h2>Research markets</h2><form id="researchForm"><textarea name="product_facts" placeholder="Optional product facts if no document is selected" maxlength="6000"></textarea><input name="target_region" value="Global" placeholder="Target region" required maxlength="100"><input name="buyer_segments" value="importers, distributors and manufacturers" placeholder="Buyer segments" required maxlength="300"><button>Research and propose for approval</button></form><small>Uses external search results; each suggestion stays pending until approved.</small></section><section class="panel"><h2>Propose a market manually</h2><form id="marketForm"><input name="market" placeholder="Market / country" required maxlength="120"><textarea name="rationale" placeholder="Why this market fits the product portfolio" required minlength="10" maxlength="1500"></textarea><input name="evidence_url" type="url" placeholder="HTTPS evidence URL" required><input name="confidence" type="number" min="0" max="1" step="0.01" value="0.5" required><button>Submit for approval</button></form></section><section class="panel"><h2>Draft outreach</h2><form id="draftForm"><input name="recipient" type="email" placeholder="Buyer email" required maxlength="254"><textarea name="product_facts" placeholder="Optional: add verified product facts if no document is selected" maxlength="6000"></textarea><div id="selectedProducts"><small>Select uploaded documents below, or paste facts above.</small></div><textarea name="buyer_context" placeholder="Buyer and company context, including source evidence" required minlength="10" maxlength="6000"></textarea><input name="goal" value="Request a short introductory conversation" maxlength="300"><button>Generate draft for review</button></form></section></div><section class="panel"><h2>Pending approvals</h2><button class="secondary" onclick="loadPending()">Refresh</button><div id="pending"></div></section></div><p id="msg"></p></main><script>
-let csrf='';const msg=t=>document.getElementById('msg').textContent=t;async function api(path,opts={}){opts.headers={...(opts.headers||{}),'Content-Type':'application/json'};if(csrf)opts.headers['X-CSRF-Token']=csrf;const r=await fetch(path,{...opts,credentials:'same-origin'});if(r.status===401){showSignedOut();throw Error('Sign in with Google first')}const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));return d}
-function showSignedOut(){document.getElementById('login').style.display='block';document.getElementById('logout').style.display='none';document.getElementById('app').style.display='none';document.getElementById('identity').textContent='Not signed in'}
-async function boot(){try{const me=await api('/me');document.getElementById('identity').textContent='Signed in as '+me.user.email;document.getElementById('login').style.display='none';document.getElementById('logout').style.display='block';document.getElementById('app').style.display='block';await loadPending();await loadProducts()}catch(e){showSignedOut()}}
-async function loadProducts(){try{const items=await api('/api/products');const root=document.getElementById('products');root.innerHTML='';if(!items.length){root.textContent='No documents uploaded yet.';return}for(const x of items){const label=document.createElement('label');label.style.display='block';const cb=document.createElement('input');cb.type='checkbox';cb.value=x._id;cb.style.width='auto';label.append(cb,document.createTextNode(' '+x.name+' · '+x.kind+' · '+x.pages+' pages'));root.append(label)}}catch(e){msg(e.message)}}
-async function loadPending(){try{const items=await api('/api/pending');const root=document.getElementById('pending');root.innerHTML='';if(!items.length){root.textContent='Nothing waiting for approval.';return}for(const x of items){const el=document.createElement('div');el.className='item';const title=document.createElement('strong');title.textContent=x.type==='market_proposal'?'Market: '+x.market:'Email: '+x.subject;el.append(title);const detail=document.createElement('p');detail.textContent=x.type==='market_proposal'?x.rationale+' · confidence '+x.confidence+' · '+x.evidence_url:x.recipient+'\n'+x.body;el.append(detail);if(x.type==='email_draft'||x.type==='market_proposal'){const b=document.createElement('button');b.textContent='Approve '+(x.type==='market_proposal'?'market proposal':'exact email draft');b.onclick=async()=>{try{if(x.type==='market_proposal')await api('/api/markets/'+encodeURIComponent(x._id)+'/approve',{method:'POST',body:'{}'});else await api('/api/drafts/'+encodeURIComponent(x._id)+'/approve',{method:'POST',body:JSON.stringify({recipient:x.recipient,subject:x.subject,body:x.body})});msg('Approval recorded. No email was sent.');await loadPending()}catch(e){msg(e.message)}};el.append(b)}root.append(el)}}catch(e){msg(e.message)}}
-document.getElementById('productForm').onsubmit=async e=>{e.preventDefault();try{const r=await fetch('/api/products/upload',{method:'POST',headers:{'X-CSRF-Token':csrf},body:new FormData(e.target),credentials:'same-origin'});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));msg('Uploaded '+d.name+'; '+d.pages+' pages indexed.');e.target.reset();await loadProducts()}catch(x){msg(x.message)}};
-document.getElementById('researchForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.source_ids=Array.from(document.querySelectorAll('#products input:checked')).map(x=>x.value);const d=await api('/api/markets/research',{method:'POST',body:JSON.stringify(f)});msg('Research completed: '+d.proposals.length+' market proposals queued. Verify the source links before approval.');await loadPending()}catch(x){msg(x.message)}};
-document.getElementById('marketForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.confidence=Number(f.confidence);await api('/api/markets',{method:'POST',body:JSON.stringify(f)});msg('Market proposal saved for approval.');e.target.reset();await loadPending()}catch(x){msg(x.message)}};
-document.getElementById('draftForm').onsubmit=async e=>{e.preventDefault();try{const f=Object.fromEntries(new FormData(e.target));f.source_ids=Array.from(document.querySelectorAll('#products input:checked')).map(x=>x.value);const d=await api('/api/drafts/generate',{method:'POST',body:JSON.stringify(f)});msg('Draft saved for approval: '+d.subject);await loadPending()}catch(x){msg(x.message)}};
-async function logout(){try{await api('/auth/logout',{method:'POST',body:'{}'});csrf='';showSignedOut();msg('Signed out')}catch(e){msg(e.message)}}
-(async()=>{try{const q=new URLSearchParams(location.search);if(q.get('signed_in'))history.replaceState({},'', '/');const r=await fetch('/me',{credentials:'same-origin'});if(r.ok){const d=await r.json();csrf=d.csrf_token||''}await boot()}catch(e){showSignedOut()}})();
-</script></body></html>""")
+    dashboard=Path(__file__).with_name("dashboard.html")
+    return HTMLResponse(dashboard.read_text(encoding="utf-8"))
 
 @app.head("/")
 def home_head():
@@ -161,6 +154,72 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
 @app.get('/api/products')
 def list_products(user=Depends(current_user),svc=Depends(get_pilot)):
     return list(svc.collection.find({'type':'product_document'},{'_id':1,'name':1,'kind':1,'pages':1,'created_at':1}).sort('created_at',-1).limit(100))
+
+def _today_bounds():
+    from datetime import datetime, timezone
+    now=datetime.now(timezone.utc)
+    start=now.replace(hour=0,minute=0,second=0,microsecond=0)
+    return now,start
+
+def _progress_data(svc, user_email):
+    now,start=_today_bounds()
+    coll=svc.collection
+    def count(query): return coll.count_documents(query)
+    chat_count=count({'type':'chat_message','owner_email':user_email,'created_at':{'$gte':start,'$lt':now}})
+    doc_count=count({'type':'product_document','created_at':{'$gte':start,'$lt':now}})
+    market_count=count({'type':'market_proposal','created_at':{'$gte':start,'$lt':now}})
+    draft_count=count({'type':'email_draft','created_at':{'$gte':start,'$lt':now}})
+    pending_total=count({'status':'pending_approval'})
+    pending_items=list(coll.find({'status':'pending_approval'},{'_id':1,'type':1,'market':1,'subject':1,'created_at':1}).sort('created_at',-1).limit(5))
+    return {'today':{'date_label':now.astimezone().strftime('%A, %d %b'),'actions':chat_count+doc_count+market_count+draft_count,'chat_messages':chat_count,'documents':doc_count,'markets':market_count,'drafts':draft_count},'pending':{'total':pending_total,'items':[{'_id':str(x['_id']),'kind':x.get('type','item'),'title':x.get('market') or x.get('subject') or 'Approval item','created_at':x.get('created_at')} for x in pending_items]},'documents':{'total':count({'type':'product_document'})},'markets':{'today':market_count}}
+
+@app.get('/api/progress')
+def get_progress(user=Depends(current_user),svc=Depends(get_pilot)):
+    return _progress_data(svc,user['email'])
+
+@app.get('/api/chat/history')
+def chat_history(user=Depends(current_user),svc=Depends(get_pilot)):
+    messages=list(svc.collection.find({'type':'chat_message','owner_email':user['email']},{'_id':0,'role':1,'content':1,'created_at':1}).sort('created_at',1).limit(100))
+    return {'messages':[{'role':m['role'],'content':m['content'],'created_at':m['created_at'].isoformat() if hasattr(m.get('created_at'),'isoformat') else str(m.get('created_at',''))} for m in messages]}
+
+@app.post('/api/chat')
+async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
+    rate_limit(request,'chat:'+user['email'],20,60)
+    message=payload.message.strip()
+    if not message: raise HTTPException(422,'Message cannot be blank')
+    now,start=_today_bounds()
+    coll=svc.collection
+    history=list(coll.find({'type':'chat_message','owner_email':user['email']},{'_id':0,'role':1,'content':1,'created_at':1}).sort('created_at',-1).limit(12))
+    history.reverse()
+    docs=list(coll.find({'type':'product_document'},{'_id':0,'name':1,'kind':1,'text':1,'created_at':1}).sort('created_at',-1).limit(5))
+    pending=list(coll.find({'status':'pending_approval'},{'_id':0,'type':1,'market':1,'rationale':1,'evidence_url':1,'subject':1,'recipient':1,'created_at':1}).sort('created_at',-1).limit(10))
+    progress=_progress_data(svc,user['email'])['today']
+    user_doc={'_id':secrets.token_hex(16),'type':'chat_message','owner_email':user['email'],'role':'user','content':message,'created_at':now}
+    coll.insert_one(user_doc)
+    try:
+        reply=await generate_agent_reply(message=message,history=history,product_documents=docs,pending_items=pending,today_summary=progress)
+    except LLMConfigurationError as exc:
+        coll.delete_one({'_id':user_doc['_id']})
+        raise HTTPException(503,str(exc)) from exc
+    except httpx.HTTPError as exc:
+        coll.delete_one({'_id':user_doc['_id']})
+        raise HTTPException(502,'The agent provider is temporarily unavailable. Please retry.') from exc
+    except RuntimeError as exc:
+        coll.delete_one({'_id':user_doc['_id']})
+        raise HTTPException(502,str(exc)) from exc
+    assistant_doc={'_id':secrets.token_hex(16),'type':'chat_message','owner_email':user['email'],'role':'assistant','content':reply,'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
+    coll.insert_one(assistant_doc)
+    return {'reply':reply,'created_at':assistant_doc['created_at'].isoformat(),'actions':[]}
+
+@app.get('/api/activity')
+def activity(user=Depends(current_user),svc=Depends(get_pilot)):
+    docs=list(svc.collection.find({'$or':[{'type':'chat_message','owner_email':user['email']},{'type':{'$in':['product_document','market_proposal','email_draft']}}]},{'_id':0,'type':1,'role':1,'content':1,'name':1,'kind':1,'market':1,'subject':1,'status':1,'created_at':1}).sort('created_at',-1).limit(100))
+    labels={'chat_message':('Chat','◌'),'product_document':('Document uploaded','▤'),'market_proposal':('Market proposal','⌕'),'email_draft':('Email draft','✉')}
+    return [{'title':labels.get(x.get('type'),('Activity','◷'))[0] if x.get('type')!='chat_message' else ('You messaged the agent' if x.get('role')=='user' else 'Agent responded'),'icon':labels.get(x.get('type'),('Activity','◷'))[1],'detail':(x.get('name') or x.get('market') or x.get('subject') or x.get('content',''))[:240],'status':x.get('status','recorded'),'created_at':x.get('created_at').isoformat() if hasattr(x.get('created_at'),'isoformat') else str(x.get('created_at',''))} for x in docs]
+
+@app.get('/api/research/recent')
+def recent_research(user=Depends(current_user),svc=Depends(get_pilot)):
+    return list(svc.collection.find({'type':'market_proposal'},{'_id':1,'market':1,'rationale':1,'evidence_url':1,'confidence':1,'status':1,'created_at':1}).sort('created_at',-1).limit(50))
 
 @app.post('/api/markets/research')
 async def research_markets(payload:MarketResearchInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
