@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: sanjay-chemicals-sales
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_ALLOWED_DOMAINS
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: LLM_API_KEY
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: OUTBOUND_EMAIL_ENABLED
+        value: "false"
