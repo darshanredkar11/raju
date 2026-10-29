@@ -57,7 +57,7 @@ def get_pilot():
 def get_product_document(svc, source_id):
     doc=svc.cache.get('product:'+source_id)
     if doc is None:
-        doc=get_product_document(svc,source_id)
+        doc=svc.collection.find_one({'_id':source_id,'type':'product_document'})
         if doc is not None: svc.cache.set('product:'+source_id,doc)
     return doc
 
