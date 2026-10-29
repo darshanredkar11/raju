@@ -7,16 +7,26 @@ services:
     envVars:
       - key: MONGODB_URI
         sync: false
+      - key: MONGODB_DATABASE
+        value: sanjay_sales
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
       - key: GOOGLE_ALLOWED_DOMAINS
+        sync: false
+      - key: GOOGLE_ALLOWED_EMAILS
         sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: LLM_API_KEY
         sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1/chat/completions
+      - key: LLM_MODEL
+        value: gpt-4.1-mini
       - key: COOKIE_SECURE
         value: "true"
       - key: OUTBOUND_EMAIL_ENABLED
