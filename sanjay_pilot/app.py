@@ -214,7 +214,7 @@ async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:No
                 sources=await search_market_sources(f"chemical import demand distributors manufacturers global export markets. Product context: {facts[:800]}")
                 recommendations=await propose_markets_with_llm(product_facts=facts,buyer_segments='importers, distributors and manufacturers',target_region='Global',sources=sources)
                 for item in recommendations:
-                    actions.append(svc.propose_market(item['market'],item['rationale'],item['evidence_url'],item['confidence']))
+                    actions.append(svc.propose_market(item['market'],item['rationale'],item['evidence_url'],item['confidence'],created_by=user['email']))
                 if actions:
                     reply='I found '+str(len(actions))+' evidence-linked market proposal(s). They are now in the approval queue; none is active yet.\n\n'+'\n'.join(f"• {x['market']} — {x['rationale']}\nEvidence: {x['evidence_url']}\nConfidence: {round(x['confidence']*100)}%" for x in actions)
                 else:
@@ -228,7 +228,7 @@ async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:No
                 reply='Before I draft a product-specific email, upload the catalogue, TDS or SDS in **Documents** so I can avoid unsupported specifications and claims.'
             else:
                 generated=await generate_sales_draft(product_facts=facts,buyer_context=message,goal='Write a concise, factual first-touch B2B introduction')
-                draft=svc.create_email_draft(email_match.group(0),generated['subject'],generated['body'])
+                draft=svc.create_email_draft(email_match.group(0),generated['subject'],generated['body'],created_by=user['email'])
                 actions.append(draft)
                 reply='I created a draft for '+draft['recipient']+'. It is waiting in **Approvals** for you to review the exact subject and message. Nothing has been sent.'
         else:
@@ -276,19 +276,19 @@ async def research_markets(payload:MarketResearchInput,request:Request,user=Depe
         recommendations=await propose_markets_with_llm(product_facts=facts,buyer_segments=payload.buyer_segments,target_region=payload.target_region,sources=sources)
     except MarketResearchConfigurationError as exc: raise HTTPException(503,str(exc)) from exc
     except (MarketResearchError,httpx.HTTPError) as exc: raise HTTPException(502,'Market research provider failed; retry later') from exc
-    proposals=[svc.propose_market(p['market'],p['rationale'],p['evidence_url'],p['confidence']) for p in recommendations]
+    proposals=[svc.propose_market(p['market'],p['rationale'],p['evidence_url'],p['confidence'],created_by=user['email']) for p in recommendations]
     return {'sources':[{'title':s['title'],'url':s['url']} for s in sources],'proposals':proposals}
 
 @app.post('/api/markets')
 def create_market(payload:MarketInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.propose_market(payload.market,payload.rationale,payload.evidence_url,payload.confidence)
+    try:return svc.propose_market(payload.market,payload.rationale,payload.evidence_url,payload.confidence,created_by=user['email'])
     except ValidationError as exc:raise HTTPException(422,str(exc)) from exc
 
 @app.post('/api/markets/{market_id}/approve')
 def approve_market(market_id:str,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.approve_market(market_id)
+    try:return svc.approve_market(market_id,approved_by=user['email'])
     except LookupError as exc:raise HTTPException(404,str(exc)) from exc
 
 @app.post('/api/drafts/generate')
@@ -302,14 +302,14 @@ async def generate_draft(payload:GenerateInput,request:Request,user=Depends(curr
             facts += '\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
         if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
         generated=await generate_sales_draft(product_facts=facts,buyer_context=payload.buyer_context,goal=payload.goal)
-        return svc.create_email_draft(payload.recipient,generated['subject'],generated['body'],source_ids=payload.source_ids)
+        return svc.create_email_draft(payload.recipient,generated['subject'],generated['body'],source_ids=payload.source_ids,created_by=user['email'])
     except LLMConfigurationError as exc:raise HTTPException(503,str(exc)) from exc
     except ValidationError as exc:raise HTTPException(422,str(exc)) from exc
 
 @app.post('/api/drafts')
 def create_draft(payload:DraftInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.create_email_draft(payload.recipient,payload.subject,payload.body,source_ids=payload.source_ids)
+    try:return svc.create_email_draft(payload.recipient,payload.subject,payload.body,source_ids=payload.source_ids,created_by=user['email'])
     except ValidationError as exc:raise HTTPException(422,str(exc)) from exc
 
 @app.get('/api/pending')
@@ -319,6 +319,6 @@ def pending(user=Depends(current_user),svc=Depends(get_pilot)):
 @app.post('/api/drafts/{draft_id}/approve')
 def approve_draft(draft_id:str,payload:DraftInput,request:Request,user=Depends(current_user),_:None=Depends(require_csrf),svc=Depends(get_pilot)):
     rate_limit(request,'write:'+user['email'],20)
-    try:return svc.approve_email_draft(draft_id,{'recipient':payload.recipient.lower(),'subject':payload.subject,'body':payload.body})
+    try:return svc.approve_email_draft(draft_id,{'recipient':payload.recipient.lower(),'subject':payload.subject,'body':payload.body},approved_by=user['email'])
     except LookupError as exc:raise HTTPException(404,str(exc)) from exc
     except ValidationError as exc:raise HTTPException(409,str(exc)) from exc
