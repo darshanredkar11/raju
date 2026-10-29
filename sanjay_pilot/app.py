@@ -198,20 +198,55 @@ async def chat(payload:ChatInput,request:Request,user=Depends(current_user),_:No
     progress=_progress_data(svc,user['email'])['today']
     user_doc={'_id':secrets.token_hex(16),'type':'chat_message','owner_email':user['email'],'role':'user','content':message,'created_at':now}
     coll.insert_one(user_doc)
+    actions=[]
     try:
-        reply=await generate_agent_reply(message=message,history=history,product_documents=docs,pending_items=pending,today_summary=progress)
+        lower=message.casefold()
+        wants_research=bool(re.search(r'\b(research|find|identify|explore)\b.{0,80}\b(markets?|export markets?|countries|buyers?)\b',lower)) or ('research' in lower and 'market' in lower)
+        wants_draft=('draft' in lower or 'write' in lower or 'compose' in lower) and any(word in lower for word in ('email','outreach','buyer'))
+        if wants_research:
+            facts='\n\n'.join(f"Source document: {d.get('name','')} ({d.get('kind','')})\n{d.get('text','')}" for d in docs if d.get('text'))
+            if len(facts.strip())<10:
+                reply='I need verified product context before researching export markets. Upload the product catalogue, TDS or SDS in **Documents**, then ask me to research markets again. I will not guess your product range.'
+            else:
+                sources=await search_market_sources(f"chemical import demand distributors manufacturers global export markets. Product context: {facts[:800]}")
+                recommendations=await propose_markets_with_llm(product_facts=facts,buyer_segments='importers, distributors and manufacturers',target_region='Global',sources=sources)
+                for item in recommendations:
+                    actions.append(svc.propose_market(item['market'],item['rationale'],item['evidence_url'],item['confidence']))
+                if actions:
+                    reply='I found '+str(len(actions))+' evidence-linked market proposal(s). They are now in the approval queue; none is active yet.\n\n'+'\n'.join(f"• {x['market']} — {x['rationale']}\nEvidence: {x['evidence_url']}\nConfidence: {round(x['confidence']*100)}%" for x in actions)
+                else:
+                    reply='I searched the available sources but could not produce a market proposal with a verifiable source link. No proposal was added. Try a more specific product document or target region in Market Research.'
+        elif wants_draft:
+            email_match=re.search(r'(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}(?![\w.-])',message,re.I)
+            facts='\n\n'.join(f"Source document: {d.get('name','')} ({d.get('kind','')})\n{d.get('text','')}" for d in docs if d.get('text'))
+            if not email_match:
+                reply='I can create an approval-ready draft. Please send the buyer email address and a sentence of buyer/company context, for example: “Draft an introduction email to buyer@example.com at Acme Imports; they distribute industrial chemicals in Germany.”'
+            elif len(facts.strip())<10:
+                reply='Before I draft a product-specific email, upload the catalogue, TDS or SDS in **Documents** so I can avoid unsupported specifications and claims.'
+            else:
+                generated=await generate_sales_draft(product_facts=facts,buyer_context=message,goal='Write a concise, factual first-touch B2B introduction')
+                draft=svc.create_email_draft(email_match.group(0),generated['subject'],generated['body'])
+                actions.append(draft)
+                reply='I created a draft for '+draft['recipient']+'. It is waiting in **Approvals** for you to review the exact subject and message. Nothing has been sent.'
+        else:
+            reply=await generate_agent_reply(message=message,history=history,product_documents=docs,pending_items=pending,today_summary=progress)
     except LLMConfigurationError as exc:
         coll.delete_one({'_id':user_doc['_id']})
         raise HTTPException(503,str(exc)) from exc
-    except httpx.HTTPError as exc:
+    except (MarketResearchConfigurationError,) as exc:
         coll.delete_one({'_id':user_doc['_id']})
-        raise HTTPException(502,'The agent provider is temporarily unavailable. Please retry.') from exc
+        raise HTTPException(503,str(exc)) from exc
+    except (MarketResearchError,httpx.HTTPError) as exc:
+        coll.delete_one({'_id':user_doc['_id']})
+        raise HTTPException(502,'The agent provider is temporarily unavailable or returned no usable research. Please retry.') from exc
+    except ValidationError as exc:
+        reply='I could not safely create that item: '+str(exc)+'. Please correct the input and try again.'
     except RuntimeError as exc:
         coll.delete_one({'_id':user_doc['_id']})
         raise HTTPException(502,str(exc)) from exc
     assistant_doc={'_id':secrets.token_hex(16),'type':'chat_message','owner_email':user['email'],'role':'assistant','content':reply,'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
     coll.insert_one(assistant_doc)
-    return {'reply':reply,'created_at':assistant_doc['created_at'].isoformat(),'actions':[]}
+    return {'reply':reply,'created_at':assistant_doc['created_at'].isoformat(),'actions':[{'id':str(x.get('_id','')),'type':x.get('type','')} for x in actions]}
 
 @app.get('/api/activity')
 def activity(user=Depends(current_user),svc=Depends(get_pilot)):
