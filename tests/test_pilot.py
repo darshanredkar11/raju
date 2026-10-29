@@ -143,3 +143,74 @@ def test_chat_input_rejects_blank_and_unknown_fields(monkeypatch):
  assert client.post('/api/chat',json={'message':'   '}).status_code==422
  assert client.post('/api/chat',json={'message':'hello','unexpected':'no'}).status_code==422
  module.app.dependency_overrides.clear()
+
+
+def test_pdf_upload_and_product_list_end_to_end(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ class Page:
+  def extract_text(self): return 'Verified chemical product facts and technical specification.'
+ class Reader:
+  def __init__(self,*args,**kwargs): self.pages=[Page()]
+ class Bucket:
+  def upload_from_stream(self,name,raw,metadata=None): return 'gridfs-test-id'
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ module.pilot=SalesPilot(store)
+ module.product_bucket=Bucket()
+ monkeypatch.setattr(module,'PdfReader',Reader)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/products/upload',data={'kind':'TDS'},files={'file':('product.pdf',b'%PDF-1.7 test content','application/pdf')})
+ assert response.status_code==200,response.text
+ data=response.json()
+ assert data['name']=='product.pdf' and data['pages']==1
+ listed=client.get('/api/products')
+ assert listed.status_code==200 and len(listed.json())==1
+ assert store.docs[data['_id']]['checksum']
+ module.app.dependency_overrides.clear()
+
+def test_market_research_endpoint_queues_only_pending_proposals(monkeypatch):
+ import asyncio, importlib
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ module.pilot=SalesPilot(store)
+ async def fake_search(query):
+  return [{'title':'Import data overview','url':'https://source.example/imports','content':'Relevant source evidence'}]
+ async def fake_propose(**kwargs):
+  return [{'market':'Germany','rationale':'Potential segment supported by the source evidence','evidence_url':'https://source.example/imports','confidence':0.7}]
+ monkeypatch.setattr(module,'search_market_sources',fake_search)
+ monkeypatch.setattr(module,'propose_markets_with_llm',fake_propose)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/markets/research',json={'product_facts':'Verified chemical facts','target_region':'Europe','buyer_segments':'importers'})
+ assert response.status_code==200,response.text
+ assert len(response.json()['proposals'])==1
+ proposal=response.json()['proposals'][0]
+ assert proposal['status']=='pending_approval'
+ assert store.docs[proposal['_id']]['approved_at'] is None
+ module.app.dependency_overrides.clear()
+
+def test_manual_draft_api_and_approval_reject_modified_body(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ module.pilot=SalesPilot(store)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ created=client.post('/api/drafts',json={'recipient':'buyer@example.com','subject':'Introduction','body':'Could we discuss your requirements?'})
+ assert created.status_code==200,created.text
+ draft=created.json()
+ changed=client.post('/api/drafts/'+draft['_id']+'/approve',json={'recipient':'buyer@example.com','subject':'Introduction','body':'Changed after review'})
+ assert changed.status_code==409
+ approved=client.post('/api/drafts/'+draft['_id']+'/approve',json={'recipient':'buyer@example.com','subject':'Introduction','body':'Could we discuss your requirements?'})
+ assert approved.status_code==200 and approved.json()['sent'] is False
+ module.app.dependency_overrides.clear()
