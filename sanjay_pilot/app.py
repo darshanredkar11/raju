@@ -54,6 +54,13 @@ def get_pilot():
     if pilot is None:raise HTTPException(503,"MongoDB is not configured")
     return pilot
 
+def get_product_document(svc, source_id):
+    doc=svc.cache.get('product:'+source_id)
+    if doc is None:
+        doc=get_product_document(svc,source_id)
+        if doc is not None: svc.cache.set('product:'+source_id,doc)
+    return doc
+
 class MarketInput(BaseModel):
     model_config=ConfigDict(extra="forbid")
     market:str=Field(min_length=2,max_length=120)
@@ -160,7 +167,7 @@ async def research_markets(payload:MarketResearchInput,request:Request,user=Depe
     rate_limit(request,'research:'+user['email'],5)
     facts=payload.product_facts.strip()
     for source_id in payload.source_ids:
-        doc=svc.collection.find_one({'_id':source_id,'type':'product_document'})
+        doc=get_product_document(svc,source_id)
         if not doc: raise HTTPException(422,'Unknown product document ID')
         facts+='\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
     if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
@@ -191,7 +198,7 @@ async def generate_draft(payload:GenerateInput,request:Request,user=Depends(curr
     try:
         facts=payload.product_facts.strip()
         for source_id in payload.source_ids:
-            doc=svc.collection.find_one({'_id':source_id,'type':'product_document'})
+            doc=get_product_document(svc,source_id)
             if not doc: raise HTTPException(422,'Unknown product document ID')
             facts += '\\n\\nSource document: '+doc['name']+' ('+doc['kind']+')\\n'+doc['text']
         if len(facts.strip())<10: raise HTTPException(422,'Select a product PDF or provide verified product facts')
