@@ -14,8 +14,10 @@ class FakeCollection:
  def __init__(self):self.docs={}
  def insert_one(self,d):self.docs[d['_id']]=copy.deepcopy(d)
  def find_one(self,q,projection=None):
-  d=self.docs.get(q.get('_id'))
-  return copy.deepcopy(d) if d and all(d.get(k)==v for k,v in q.items() if k!='_id') else None
+  candidates=[self.docs[q['_id']]] if '_id' in q and q['_id'] in self.docs else ([] if '_id' in q else list(self.docs.values()))
+  for d in candidates:
+   if all(d.get(k)==v for k,v in q.items()): return copy.deepcopy(d)
+  return None
  def find(self,q=None,projection=None):
   q=q or {}
   def matches(d,query):
