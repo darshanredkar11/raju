@@ -214,3 +214,64 @@ def test_manual_draft_api_and_approval_reject_modified_body(monkeypatch):
  approved=client.post('/api/drafts/'+draft['_id']+'/approve',json={'recipient':'buyer@example.com','subject':'Introduction','body':'Could we discuss your requirements?'})
  assert approved.status_code==200 and approved.json()['sent'] is False
  module.app.dependency_overrides.clear()
+
+
+def test_chat_market_research_requires_verified_product_context(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ module.pilot=SalesPilot(store)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/chat',json={'message':'Research promising export markets using our product documents.'})
+ assert response.status_code==200
+ assert 'upload' in response.json()['reply'].lower()
+ assert not any(d.get('type')=='market_proposal' for d in store.docs.values())
+ module.app.dependency_overrides.clear()
+
+def test_chat_can_create_pending_market_proposals(monkeypatch):
+ import importlib
+ from datetime import datetime, timezone
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'Catalogue.pdf','kind':'catalogue','text':'Verified product range and technical uses.','created_at':datetime.now(timezone.utc)})
+ module.pilot=SalesPilot(store)
+ async def fake_search(query): return [{'title':'Market source','url':'https://source.example/markets','content':'Import evidence'}]
+ async def fake_propose(**kwargs): return [{'market':'Germany','rationale':'Potential importer segment backed by source evidence','evidence_url':'https://source.example/markets','confidence':0.72}]
+ monkeypatch.setattr(module,'search_market_sources',fake_search)
+ monkeypatch.setattr(module,'propose_markets_with_llm',fake_propose)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/chat',json={'message':'Research promising export markets using our product documents.'})
+ assert response.status_code==200,response.text
+ assert len(response.json()['actions'])==1
+ proposal=next(d for d in store.docs.values() if d.get('type')=='market_proposal')
+ assert proposal['status']=='pending_approval' and proposal['approved_at'] is None
+ module.app.dependency_overrides.clear()
+
+def test_chat_can_create_email_draft_but_never_send(monkeypatch):
+ import importlib
+ from datetime import datetime, timezone
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'TDS.pdf','kind':'TDS','text':'Verified product specifications from the TDS.','created_at':datetime.now(timezone.utc)})
+ module.pilot=SalesPilot(store)
+ async def fake_draft(**kwargs): return {'subject':'Introduction to Sanjay Chemicals','body':'Could we discuss your sourcing requirements?'}
+ monkeypatch.setattr(module,'generate_sales_draft',fake_draft)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ response=client.post('/api/chat',json={'message':'Draft an introduction email to buyer@example.com at Acme Imports in Germany.'})
+ assert response.status_code==200,response.text
+ draft=next(d for d in store.docs.values() if d.get('type')=='email_draft')
+ assert draft['status']=='pending_approval' and draft['sent'] is False
+ assert 'Nothing has been sent' in response.json()['reply']
+ module.app.dependency_overrides.clear()
