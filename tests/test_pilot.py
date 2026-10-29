@@ -332,3 +332,31 @@ def test_query_indexes_initialize_once(monkeypatch):
  assert client.get('/api/pending').status_code==200
  assert len(store.indexes)==4
  module.app.dependency_overrides.clear()
+
+
+def test_google_users_cannot_read_or_approve_each_others_records(monkeypatch):
+ import importlib
+ from datetime import datetime, timezone
+ from fastapi.testclient import TestClient
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=FakeCollection()
+ now=datetime.now(timezone.utc)
+ store.insert_one({'_id':'doc-a','type':'product_document','name':'A.pdf','kind':'TDS','pages':1,'created_by':'a@gmail.com','created_at':now,'text':'Product A verified facts.'})
+ store.insert_one({'_id':'doc-b','type':'product_document','name':'B.pdf','kind':'TDS','pages':1,'created_by':'b@gmail.com','created_at':now,'text':'Product B verified facts.'})
+ store.insert_one({'_id':'draft-a','type':'email_draft','recipient':'buyer-a@example.com','subject':'A','body':'Hello from A','status':'pending_approval','sent':False,'created_by':'a@gmail.com','created_at':now})
+ store.insert_one({'_id':'draft-b','type':'email_draft','recipient':'buyer-b@example.com','subject':'B','body':'Hello from B','status':'pending_approval','sent':False,'created_by':'b@gmail.com','created_at':now})
+ module.pilot=SalesPilot(store)
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'a@gmail.com','name':'A'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ products=client.get('/api/products')
+ pending=client.get('/api/pending')
+ assert [x['name'] for x in products.json()]==['A.pdf']
+ assert [x['_id'] for x in pending.json()]==['draft-a']
+ denied=client.post('/api/drafts/draft-b/approve',json={'recipient':'buyer-b@example.com','subject':'B','body':'Hello from B'})
+ assert denied.status_code==404
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'b@gmail.com','name':'B'}
+ assert [x['name'] for x in client.get('/api/products').json()]==['B.pdf']
+ assert [x['_id'] for x in client.get('/api/pending').json()]==['draft-b']
+ module.app.dependency_overrides.clear()
