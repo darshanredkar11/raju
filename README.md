@@ -1,11 +1,13 @@
 # Sanjay Chemicals — Harvey Sales Pilot
 
-A small, approval-first sales desk overlay for the existing Harvey sales agent. The goal is qualified chemical B2B conversations, not a framework rewrite.
+An agent-first sales workspace for Sanjay Chemicals. The home screen is a persistent chat with the sales agent, daily progress and pending approvals. The current implementation is the safe sales desk foundation; it is not yet directly wired to Harvey's upstream autonomous runtime.
 
 ## Pilot scope
 
-- Google OAuth sign-in only; access is restricted to verified emails/domains configured by the operator.
+- Google sign-in accepts any verified Google account; no Workspace/domain allowlist is required. Every signed-in account currently shares the same workspace, so this is intentionally open access.
 - MongoDB Atlas Free is the durable record store; a bounded in-memory TTL/LRU cache reduces repeat reads.
+- Persistent agent chat with recent conversation context, product-document context and daily progress.
+- Chat can trigger evidence-backed market research and create email drafts that remain pending approval.
 - API-backed LLM produces a sales email draft from supplied product facts and buyer context.
 - Market research proposals and email drafts remain pending until an authenticated user approves them.
 - Approval is tied to the exact recipient, subject and body. A changed draft cannot reuse an earlier approval.
@@ -25,7 +27,7 @@ cp .env.example .env
 uvicorn sanjay_pilot.app:app --reload
 ```
 
-The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 characters. Configure MongoDB, Google OAuth and the LLM API before using the sales workflow. Run `pytest -q` for unit tests.
+The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 characters. Configure MongoDB, Google OAuth and the LLM API before using the sales workflow. Run `pytest -q` for the test suite and `python scripts/check_dashboard_js.py` for dashboard JavaScript syntax validation.
 
 ## Required host environment
 
@@ -49,12 +51,12 @@ Free web services can sleep when idle, and their local filesystem is not durable
 
 ## Product catalogue / TDS / SDS
 
-Upload catalogue, TDS and SDS PDFs from the dashboard. The pilot limits uploads to 10 MB and 200 pages, validates the PDF signature, stores the original in MongoDB GridFS, extracts searchable text and records a SHA-256 checksum. Image-only/scanned PDFs are rejected with an OCR-required message. Select the uploaded documents when generating a draft; their extracted text is supplied as source context. Do not treat a generated draft as a verified technical or regulatory statement; a human must verify specifications and claims against the original document.
+Upload catalogue, TDS and SDS PDFs from the dashboard. The pilot limits uploads to 10 MB and 200 pages, validates the PDF signature, stores the original in MongoDB GridFS, extracts searchable text and records a SHA-256 checksum. Image-only/scanned PDFs are rejected with an OCR-required message. Select the uploaded documents when researching markets; their extracted text is supplied as source context for market research and draft generation. Do not treat a generated draft as a verified technical or regulatory statement; a human must verify specifications and claims against the original document.
 
 ## Security and operational limits
 
 - Use HTTPS; only the Google OAuth callback should be registered.
-- Allowlist company Google identities/domains; domain membership must be controlled by the company.
+- Any verified Google account can sign in. This is not appropriate for confidential customer data until workspace roles and access controls are added.
 - Keep outbound email disabled. No SMTP/Gmail send integration is present.
 - Market proposals are not automatically approved or activated as campaign targets.
 - Research evidence is stored as a URL and confidence score; humans must verify source quality.
