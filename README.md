@@ -1,64 +1,36 @@
-# Sanjay Chemicals — Harvey Sales Pilot
+# Harvey Native Harness — Sanjay Chemicals
 
-An agent-first sales workspace for Sanjay Chemicals. The home screen is a persistent chat with the sales agent, daily progress and pending approvals. The current implementation is a sales desk foundation; it is not wired to Harvey's upstream autonomous runtime. Chat currently calls a configurable OpenAI-compatible LLM API.
+**This branch is not a web application.** It configures and validates the existing [upstream Harvey sales agent](https://github.com/ethanplusai/harvey), using Harvey's own runtime, dashboard, agents, persistence and approval workflow.
 
-## Pilot scope
+Start with harness/README.md and harness/COMPONENT_SELECTION.md.
 
-- Google sign-in accepts any verified Google account; no Workspace/domain allowlist is required. Each account's chat, uploaded documents, market proposals and drafts are scoped to that email by default. This is per-account isolation, not yet a shared organisation/team workspace or a full RBAC implementation.
-- Anonymous visitors receive a standalone login page only; the dashboard shell is served only for a valid session. `/manual` is an authenticated in-product operator guide.
-- MongoDB Atlas Free is the durable record store; a bounded in-memory TTL/LRU cache reduces repeat reads.
-- Persistent agent chat with recent conversation context, product-document context and daily progress.
-- Chat can trigger evidence-backed market research and create email drafts that remain pending approval.
-- API-backed LLM produces a sales email draft from supplied product facts and buyer context.
-- Market research proposals and email drafts remain pending until an authenticated user approves them.
-- Approval is tied to the exact recipient, subject and body. A changed draft cannot reuse an earlier approval.
-- **No email sending code or send endpoint exists.** Approval records are not transmitted to recipients.
-- API documentation is disabled in the web service; write routes require CSRF tokens and have basic rate limits.
+## Principle
 
-## Run locally
+**Reuse proven components. Configure before integrating. Build only when a real requirement cannot be met.**
 
-Use Python 3.12 or newer.
+No second dashboard, chat UI, agent loop, memory database, email sender, or notification service by default. Harvey already provides prospecting, product-knowledge skills, native mail providers, reply handling, a persistent SQLite store, Outbox approvals, deterministic pre-send checks and a kill switch. See the upstream Harvey repository for supported behavior.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Set environment variables from .env in your shell or your IDE; never commit secrets.
-uvicorn sanjay_pilot.app:app --reload
-```
+## This branch currently contains
 
-The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 characters. Configure MongoDB, Google OAuth and the LLM API before using the sales workflow. Run `pytest -q` for the test suite and `python scripts/check_dashboard_js.py` for dashboard JavaScript syntax validation.
+- A reuse-first component strategy.
+- A read-only preflight script for an existing Harvey checkout.
+- Safety tests that enforce human approval for outbound email.
+- No public service definition and no deployment step.
 
-## Required host environment
+The old Sanjay sales-pilot prototype files are retained temporarily as reference only; they are not the target runtime and must not be deployed as a separate app.
 
-- `MONGODB_URI`: MongoDB Atlas connection string. Use a database user with access only to the pilot database; allowlist only the hosting egress IPs if stable, or the narrowest practical network policy.
-- `MONGODB_DATABASE`: defaults to `sanjay_sales`.
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Google OAuth web client.
-- `GOOGLE_REDIRECT_URI`: `https://YOUR-SERVICE.onrender.com/auth/google/callback`; register this exact URI in Google Cloud Console.
-- Any verified Google account can sign in; no Google Workspace domain or email allowlist is required. The Google OAuth web client still must be configured. Records are scoped per account. A shared team workspace with administrator-managed membership and roles is not implemented yet.
-- `SESSION_SECRET`: at least 32 random characters. Keep it private.
-- `TAVILY_API_KEY`: enables web search for market research (external search usage is subject to the provider's plan and limits).
-- `LLM_API_KEY`, optionally `LLM_BASE_URL` and `LLM_MODEL`.
-- `COOKIE_SECURE=true` in hosted HTTPS environments.
+## Run the preflight
 
-Never paste credentials into chat, commit `.env`, or use a MongoDB Atlas administrator credential in the application.
+Run it with the Python environment used by the existing Harvey installation so PyYAML is available:
 
-## Render and MongoDB
+    /path/to/harvey/.venv/bin/python scripts/harvey_preflight.py --harvey-home /path/to/harvey
 
-`render.yaml` is a blueprint template for a **free web-service plan only**. It does not create a database or deploy anything by itself. Connect the repository in Render and review the plan before applying it. Add secrets in Render's Environment settings. The MongoDB Atlas cluster must be created/configured separately by the owner; no paid resources are created by this repository.
+This reads local files only. It does not start Harvey, modify config, call a model, send messages, or prove that a running runtime is connected. End-to-end verification must happen against the actual installed Harvey UI/runtime.
 
-Free web services can sleep when idle, and their local filesystem is not durable. MongoDB stores persistent records; the cache is deliberately ephemeral. Verify the current Render plan and MongoDB Atlas Free limits before production use.
+## Safety defaults
 
-## Product catalogue / TDS / SDS
-
-Upload catalogue, TDS and SDS PDFs from the dashboard. The pilot limits uploads to 10 MB and 200 pages, validates the PDF signature, stores the original in MongoDB GridFS, extracts searchable text and records a SHA-256 checksum. Image-only/scanned PDFs are rejected with an OCR-required message. Select the uploaded documents when researching markets; their extracted text is supplied as source context for market research and draft generation. Do not treat a generated draft as a verified technical or regulatory statement; a human must verify specifications and claims against the original document.
-
-## Security and operational limits
-
-- Use HTTPS; only the Google OAuth callback should be registered.
-- Any verified Google account can sign in, with per-account record scoping. This is not a substitute for organisation-level RBAC, audit policy, backups, retention controls and security review before production data.
-- Keep outbound email disabled. No SMTP/Gmail send integration is present.
-- Market proposals are not automatically approved or activated as campaign targets.
-- Research evidence is stored as a URL and confidence score; humans must verify source quality.
-- This is a pilot scaffold, not a security certification. Review dependency alerts, access logs, backups and applicable chemical/export compliance before real customer data or outreach.
+- Keep channels.email.require_approval: true.
+- Do not activate autopilot or send real messages during setup.
+- Verify product facts against official catalogues/TDS/SDS; do not invent technical or regulatory claims.
+- Keep Harvey's dashboard on loopback; use its documented SSH-tunnel method for remote access.
+- Do not commit secrets, local Harvey data, or customer information.
