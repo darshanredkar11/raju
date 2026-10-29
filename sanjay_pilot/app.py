@@ -157,8 +157,10 @@ def list_products(user=Depends(current_user),svc=Depends(get_pilot)):
 
 def _today_bounds():
     from datetime import datetime, timezone
-    now=datetime.now(timezone.utc)
-    start=now.replace(hour=0,minute=0,second=0,microsecond=0)
+    from zoneinfo import ZoneInfo
+    local_now=datetime.now(ZoneInfo('Asia/Kolkata'))
+    now=local_now.astimezone(timezone.utc)
+    start=local_now.replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc)
     return now,start
 
 def _progress_data(svc, user_email):
@@ -171,7 +173,7 @@ def _progress_data(svc, user_email):
     draft_count=count({'type':'email_draft','created_at':{'$gte':start,'$lt':now}})
     pending_total=count({'status':'pending_approval'})
     pending_items=list(coll.find({'status':'pending_approval'},{'_id':1,'type':1,'market':1,'subject':1,'created_at':1}).sort('created_at',-1).limit(5))
-    return {'today':{'date_label':now.astimezone().strftime('%A, %d %b'),'actions':chat_count+doc_count+market_count+draft_count,'chat_messages':chat_count,'documents':doc_count,'markets':market_count,'drafts':draft_count},'pending':{'total':pending_total,'items':[{'_id':str(x['_id']),'kind':x.get('type','item'),'title':x.get('market') or x.get('subject') or 'Approval item','created_at':x.get('created_at')} for x in pending_items]},'documents':{'total':count({'type':'product_document'})},'markets':{'today':market_count}}
+    return {'today':{'date_label':now.astimezone(__import__('zoneinfo').ZoneInfo('Asia/Kolkata')).strftime('%A, %d %b'),'actions':chat_count+doc_count+market_count+draft_count,'chat_messages':chat_count,'documents':doc_count,'markets':market_count,'drafts':draft_count},'pending':{'total':pending_total,'items':[{'_id':str(x['_id']),'kind':x.get('type','item'),'title':x.get('market') or x.get('subject') or 'Approval item','created_at':x.get('created_at')} for x in pending_items]},'documents':{'total':count({'type':'product_document'})},'markets':{'today':market_count}}
 
 @app.get('/api/progress')
 def get_progress(user=Depends(current_user),svc=Depends(get_pilot)):
