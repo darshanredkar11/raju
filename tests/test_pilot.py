@@ -88,7 +88,11 @@ def test_app_starts_with_google_only_routes_and_protects_api(monkeypatch):
  health=client.get('/health')
  assert health.status_code==200 and health.json()['outbound_email_enabled'] is False
  home=client.get('/')
- assert home.status_code==200 and 'Talk to your sales agent' in home.text and 'Daily progress' in home.text
+ assert home.status_code==200 and 'Continue with Google' in home.text
+ assert 'Talk to your sales agent' not in home.text
+ assert 'data-page="approvals"' not in home.text
+ assert client.get('/manual').status_code==401
+ assert client.get('/health').json()['harvey_runtime_connected'] is False
  assert client.get('/auth/google').status_code==503
  assert client.get('/api/pending').status_code==401
  assert client.get('/auth/password').status_code==404
@@ -248,7 +252,7 @@ def test_chat_can_create_pending_market_proposals(monkeypatch):
  monkeypatch.setenv('SESSION_SECRET','z'*48)
  module=importlib.import_module('sanjay_pilot.app')
  store=FakeCollection()
- store.insert_one({'_id':'doc-1','type':'product_document','name':'Catalogue.pdf','kind':'catalogue','text':'Verified product range and technical uses.','created_at':datetime.now(timezone.utc)})
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'Catalogue.pdf','kind':'catalogue','text':'Verified product range and technical uses.','created_by':'tester@gmail.com','created_at':datetime.now(timezone.utc)})
  module.pilot=SalesPilot(store)
  async def fake_search(query): return [{'title':'Market source','url':'https://source.example/markets','content':'Import evidence'}]
  async def fake_propose(**kwargs): return [{'market':'Germany','rationale':'Potential importer segment backed by source evidence','evidence_url':'https://source.example/markets','confidence':0.72}]
@@ -272,7 +276,7 @@ def test_chat_can_create_email_draft_but_never_send(monkeypatch):
  monkeypatch.setenv('SESSION_SECRET','z'*48)
  module=importlib.import_module('sanjay_pilot.app')
  store=FakeCollection()
- store.insert_one({'_id':'doc-1','type':'product_document','name':'TDS.pdf','kind':'TDS','text':'Verified product specifications from the TDS.','created_at':datetime.now(timezone.utc)})
+ store.insert_one({'_id':'doc-1','type':'product_document','name':'TDS.pdf','kind':'TDS','text':'Verified product specifications from the TDS.','created_by':'tester@gmail.com','created_at':datetime.now(timezone.utc)})
  module.pilot=SalesPilot(store)
  async def fake_draft(**kwargs): return {'subject':'Introduction to Sanjay Chemicals','body':'Could we discuss your sourcing requirements?'}
  monkeypatch.setattr(module,'generate_sales_draft',fake_draft)
