@@ -171,6 +171,9 @@ def test_pdf_upload_and_product_list_end_to_end(monkeypatch):
  assert data['name']=='product.pdf' and data['pages']==1
  listed=client.get('/api/products')
  assert listed.status_code==200 and len(listed.json())==1
+ duplicate=client.post('/api/products/upload',data={'kind':'TDS'},files={'file':('product.pdf',b'%PDF-1.7 test content','application/pdf')})
+ assert duplicate.status_code==200 and duplicate.json()['duplicate'] is True
+ assert len([d for d in store.docs.values() if d.get('type')=='product_document'])==1
  assert store.docs[data['_id']]['checksum']
  module.app.dependency_overrides.clear()
 
