@@ -95,7 +95,7 @@ class MarketResearchInput(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok":True,"database_configured":pilot is not None,"outbound_email_enabled":False}
+    return {"ok":True,"database_configured":pilot is not None,"google_sign_in_configured":hasattr(oauth,"google"),"llm_configured":bool(os.getenv("LLM_API_KEY")),"market_research_configured":bool(os.getenv("TAVILY_API_KEY") and os.getenv("LLM_API_KEY")),"outbound_email_enabled":False}
 
 @app.get("/",response_class=HTMLResponse)
 def home():
