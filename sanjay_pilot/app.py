@@ -142,7 +142,7 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
         extracted=' '.join((page.extract_text() or '') for page in reader.pages)
     except HTTPException: raise
     except Exception as exc: raise HTTPException(422,'PDF could not be parsed') from exc
-    extracted=re.sub(r'\\s+',' ',extracted).strip()[:100000]
+    extracted=re.sub(r'\s+',' ',extracted).strip()[:100000]
     if len(extracted)<20: raise HTTPException(422,'No usable text found. Scanned PDFs need OCR before upload.')
     name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].replace(chr(92),'/').split('/')[-1])[:160]
     checksum=hashlib.sha256(raw).hexdigest()
