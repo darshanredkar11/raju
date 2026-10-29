@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/darshanredkar11/raju/blob/harvey-native-harness/schemas/rfq-intake.schema.json",
+  "title": "Sanjay Chemicals RFQ Intake",
+  "description": "A normalized, partial-answer-friendly record for an inbound chemical request. It is not a quotation, inventory record, or technical approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "rfq_id": { "type": "string", "description": "Stable internal identifier assigned by the system of record." },
+    "received_at": { "type": "string", "format": "date-time" },
+    "source_channel": {
+      "type": "string",
+      "enum": ["website", "email", "phone", "referral", "marketplace", "sales_outreach", "other"]
+    },
+    "source_reference": { "type": "string", "description": "Message ID, source URL or marketplace reference; do not store credentials." },
+    "buyer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "company_name": { "type": "string" },
+        "website": { "type": "string", "format": "uri" },
+        "contact_name": { "type": "string" },
+        "job_title": { "type": "string" },
+        "business_email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "communication_permission_or_basis": { "type": "string" }
+      }
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requested_name": { "type": "string" },
+        "internal_sku": { "type": "string" },
+        "cas_number": { "type": "string" },
+        "grade_or_specification": { "type": "string" },
+        "application": { "type": "string" },
+        "required_documents": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number", "exclusiveMinimum": 0 },
+        "unit": { "type": "string" },
+        "frequency": { "type": "string", "enum": ["one_time", "recurring", "unknown"] }
+      }
+    },
+    "packaging_preference": { "type": "string" },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "city": { "type": "string" },
+        "site_or_postal_code": { "type": "string" },
+        "country": { "type": "string" },
+        "required_by": { "type": "string", "format": "date" },
+        "incoterm": { "type": "string" }
+      }
+    },
+    "commercial_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_price": { "type": "string", "description": "Optional buyer-provided target; never infer it." },
+        "payment_terms_requested": { "type": "string" },
+        "vendor_onboarding_requirements": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["new", "needs_clarification", "qualified", "disqualified", "quoted", "won", "lost"] },
+        "owner": { "type": "string" },
+        "next_action": { "type": "string" },
+        "next_action_due": { "type": "string", "format": "date-time" },
+        "missing_information": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "loss_reason": { "type": "string" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "product_identity_verified": { "type": "boolean", "default": false },
+        "current_availability_verified": { "type": "boolean", "default": false },
+        "price_approved": { "type": "boolean", "default": false },
+        "specification_source": { "type": "string" },
+        "commercial_approver": { "type": "string" },
+        "technical_approver": { "type": "string" }
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "required": ["source_channel"],
+  "$comment": "Missing data is allowed so partial enquiries can be captured. Never treat a missing value as verified or quote-ready."
+}
