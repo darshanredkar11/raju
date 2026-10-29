@@ -146,8 +146,11 @@ async def upload_product(kind:str=Form(...),file:UploadFile=File(...),request:Re
     if len(extracted)<20: raise HTTPException(422,'No usable text found. Scanned PDFs need OCR before upload.')
     name=re.sub(r'[^A-Za-z0-9._ -]','_', (file.filename or 'product.pdf').split('/')[-1].replace(chr(92),'/').split('/')[-1])[:160]
     checksum=hashlib.sha256(raw).hexdigest()
+    existing=svc.collection.find_one({'type':'product_document','checksum':checksum})
+    if existing:
+        return {'_id':str(existing['_id']),'name':existing.get('name',name),'kind':existing.get('kind',kind),'pages':existing.get('pages',0),'checksum':checksum,'duplicate':True}
     file_id=product_bucket.upload_from_stream(name,raw,metadata={'kind':kind,'sha256':checksum,'uploaded_by':user['email']})
-    doc={'_id':secrets.token_hex(16),'type':'product_document','name':name,'kind':kind,'checksum':checksum,'gridfs_id':str(file_id),'text':extracted,'pages':len(reader.pages),'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
+    doc={'_id':secrets.token_hex(16),'type':'product_document','name':name,'kind':kind,'checksum':checksum,'gridfs_id':str(file_id),'text':extracted,'pages':len(reader.pages),'created_by':user['email'],'created_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc)}
     svc.collection.insert_one(doc);svc.cache.set('product:'+doc['_id'],doc)
     return {'_id':doc['_id'],'name':name,'kind':kind,'pages':doc['pages'],'checksum':checksum}
 
