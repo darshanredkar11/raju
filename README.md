@@ -33,7 +33,7 @@ The app intentionally refuses to start if `SESSION_SECRET` is shorter than 32 ch
 - `MONGODB_DATABASE`: defaults to `sanjay_sales`.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Google OAuth web client.
 - `GOOGLE_REDIRECT_URI`: `https://YOUR-SERVICE.onrender.com/auth/google/callback`; register this exact URI in Google Cloud Console.
-- `GOOGLE_ALLOWED_DOMAINS`: comma-separated company domain(s), or use `GOOGLE_ALLOWED_EMAILS` for exact accounts. Set at least one; an empty allowlist denies all users.
+- Any verified Google account can sign in; no Google Workspace domain or email allowlist is required. The Google OAuth web client still must be configured. Because this is a shared workspace, every signed-in account can access its business data; use only with that access model in mind.
 - `SESSION_SECRET`: at least 32 random characters. Keep it private.
 - `TAVILY_API_KEY`: enables web search for market research (external search usage is subject to the provider's plan and limits).
 - `LLM_API_KEY`, optionally `LLM_BASE_URL` and `LLM_MODEL`.
