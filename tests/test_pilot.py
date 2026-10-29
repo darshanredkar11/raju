@@ -6,7 +6,7 @@ from sanjay_pilot.auth import allowed_google_email
 
 class FakeCursor(list):
  def sort(self,key,direction=1):
-  self.sort(key=lambda d:(d.get(key) is not None,d.get(key)),reverse=direction<0)
+  super().sort(key=lambda d:(d.get(key) is not None,d.get(key)),reverse=direction<0)
   return self
  def limit(self,n): return FakeCursor(self[:n])
 
