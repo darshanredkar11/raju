@@ -311,3 +311,24 @@ def test_market_approval_is_single_use_and_audited():
  assert result['approved_by']=='reviewer@gmail.com'
  assert c.docs[p['_id']]['status']=='approved'
  with pytest.raises(LookupError): s.approve_market(p['_id'],approved_by='reviewer@gmail.com')
+
+
+def test_query_indexes_initialize_once(monkeypatch):
+ import importlib
+ from fastapi.testclient import TestClient
+ class IndexedCollection(FakeCollection):
+  def __init__(self): super().__init__(); self.indexes=[]
+  def create_index(self,spec,**kwargs): self.indexes.append((spec,kwargs.get('name')))
+ monkeypatch.setenv('SESSION_SECRET','z'*48)
+ module=importlib.import_module('sanjay_pilot.app')
+ store=IndexedCollection()
+ module.pilot=SalesPilot(store)
+ module._indexes_ready=False
+ module.app.dependency_overrides[module.current_user]=lambda:{'email':'tester@gmail.com','name':'Tester'}
+ module.app.dependency_overrides[module.require_csrf]=lambda:None
+ client=TestClient(module.app)
+ assert client.get('/api/pending').status_code==200
+ assert len(store.indexes)==4
+ assert client.get('/api/pending').status_code==200
+ assert len(store.indexes)==4
+ module.app.dependency_overrides.clear()
